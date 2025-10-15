@@ -69,8 +69,6 @@ export default function Login() {
           isWorkshopMode: selectedMode === 'workshop',
           parentEmail: null,
           parentalConsent: null,
-          consentAcknowledgment: true,
-          parentalConsentDate: new Date().toISOString(),
           consentVerified: true,
         };
 
@@ -213,7 +211,7 @@ export default function Login() {
               ¿No tienes un perfil?
             </p>
             <Button
-              variant="link"
+              variant="ghost"
               onClick={() => setLocation('/register')}
               data-testid="button-go-to-register"
             >
@@ -321,7 +319,7 @@ export default function Login() {
                   ¿No tienes un perfil?
                 </p>
                 <Button
-                  variant="link"
+                  variant="ghost"
                   onClick={() => setLocation('/register')}
                   data-testid="button-go-to-register"
                 >

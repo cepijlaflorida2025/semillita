@@ -42,7 +42,15 @@ export interface IStorage {
   createUser(user: InsertUser): Promise<User>;
   updateUserPoints(id: string, pointsToAdd: number): Promise<User>;
   updateUserConsent(id: string, consentVerified: boolean): Promise<User>;
-  getAllChildren(): Promise<User[]>;
+  deleteUser(id: string): Promise<void>;
+  // Return a minimal child summary for facilitator dashboard
+  getAllChildren(): Promise<{
+    id: string;
+    alias: string;
+    age: number;
+    points: number | null;
+    createdAt: Date | null;
+  }[]>;
   getJournalEntriesCount(userId: string): Promise<number>;
   getUserPlant(userId: string): Promise<Plant | undefined>;
   getJournalEntriesWithEmotions(userId: string): Promise<JournalEntryWithEmotion[]>;
@@ -63,6 +71,8 @@ export interface IStorage {
   createJournalEntry(entry: InsertJournalEntry): Promise<JournalEntry>;
   getUserJournalEntries(userId: string, limit?: number): Promise<JournalEntryWithEmotion[]>;
   getLatestJournalEntry(userId: string): Promise<JournalEntryWithEmotion | undefined>;
+  getJournalEntryById(id: string): Promise<JournalEntry | undefined>;
+  deleteJournalEntry(id: string): Promise<void>;
 
   // Seed operations
   getUserSeeds(userId: string): Promise<Seed[]>;
@@ -96,7 +106,10 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getUserByAlias(alias: string): Promise<User | undefined> {
-    const [user] = await db.select().from(users).where(eq(users.alias, alias));
+    const [user] = await db.select()
+      .from(users)
+      .where(eq(users.alias, alias))
+      .limit(1);
     return user;
   }
 
@@ -153,7 +166,7 @@ export class DatabaseStorage implements IStorage {
   async updateUserConsent(id: string, consentVerified: boolean): Promise<User> {
     const [user] = await db
       .update(users)
-      .set({ 
+      .set({
         consentVerified,
         parentalConsentDate: consentVerified ? new Date() : null,
         updatedAt: new Date()
@@ -161,6 +174,10 @@ export class DatabaseStorage implements IStorage {
       .where(eq(users.id, id))
       .returning();
     return user;
+  }
+
+  async deleteUser(id: string): Promise<void> {
+    await db.delete(users).where(eq(users.id, id));
   }
 
   // Plant operations
@@ -298,6 +315,18 @@ export class DatabaseStorage implements IStorage {
       .limit(1);
 
     return entry as JournalEntryWithEmotion | undefined;
+  }
+
+  async getJournalEntryById(id: string): Promise<JournalEntry | undefined> {
+    const [entry] = await db
+      .select()
+      .from(journalEntries)
+      .where(eq(journalEntries.id, id));
+    return entry;
+  }
+
+  async deleteJournalEntry(id: string): Promise<void> {
+    await db.delete(journalEntries).where(eq(journalEntries.id, id));
   }
 
   // Seed operations
@@ -567,12 +596,14 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Facilitator-specific operations
-  async getAllChildren(): Promise<User[]> {
+  async getAllChildren(): Promise<{ id: string; alias: string; age: number; points: number | null; createdAt: Date | null }[]> {
+    // Select only the fields we need for the facilitator dashboard and limit results
     return await db
-      .select()
+      .select({ id: users.id, alias: users.alias, age: users.age, points: users.points, createdAt: users.createdAt })
       .from(users)
       .where(eq(users.role, 'child'))
-      .orderBy(desc(users.createdAt));
+      .orderBy(desc(users.createdAt))
+      .limit(100);
   }
 
   async getJournalEntriesCount(userId: string): Promise<number> {

@@ -46,6 +46,12 @@ export default function FacilitatorDashboard() {
     retryDelay: 1000, // Wait 1 second between retries
   });
 
+  // Debugging: log currentUser and dashboard fetch trigger
+  if (process.env.NODE_ENV === 'development') {
+    console.log('🐞 [FACILITATOR] currentUser:', currentUser);
+    console.log('🐞 [FACILITATOR] query enabled:', !!currentUser?.id && currentUser?.role === 'facilitator');
+  }
+
   // Fetch emotions list
   const { data: emotionsData } = useQuery<Array<{ id: string; name: string; emoji: string; color: string }>>({
     queryKey: ['/api/emotions'],

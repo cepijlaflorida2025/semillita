@@ -15,7 +15,7 @@ interface User {
   
   // Context and role
   context: 'workshop' | 'home';
-  role: 'child' | 'caregiver' | 'professional';
+  role: 'child' | 'caregiver' | 'professional' | 'facilitator';
   
   // Enhanced parental consent system
   parentalConsent: boolean;
