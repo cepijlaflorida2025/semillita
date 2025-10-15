@@ -10,7 +10,7 @@ if (!supabaseUrl || !supabaseAnonKey) {
 }
 
 // Bucket configuration
-export const PROFILE_BUCKET = 'pas-san-miguel';
+export const PROFILE_BUCKET = 'semillita-uploads';
 
 // Lazy-initialized clients (prevents initialization errors in serverless)
 let _supabase: SupabaseClient | null = null;
@@ -49,6 +49,60 @@ function getSupabaseAdminClient(): SupabaseClient {
   return _supabaseAdmin;
 }
 
+// Track if bucket has been verified (to avoid checking on every upload)
+let bucketVerified = false;
+
+/**
+ * Ensure the storage bucket exists and has correct policies
+ */
+async function ensureBucketExists(): Promise<void> {
+  if (bucketVerified) {
+    return;
+  }
+
+  try {
+    const supabaseAdmin = getSupabaseAdminClient();
+
+    // Check if bucket exists
+    const { data: buckets, error: listError } = await supabaseAdmin.storage.listBuckets();
+
+    if (listError) {
+      console.error('Error listing buckets:', listError);
+      throw listError;
+    }
+
+    const bucketExists = buckets?.some(b => b.name === PROFILE_BUCKET);
+
+    if (!bucketExists) {
+      console.log(`📦 Creating bucket: ${PROFILE_BUCKET}`);
+
+      // Create the bucket with public access
+      const { data: createData, error: createError } = await supabaseAdmin.storage.createBucket(
+        PROFILE_BUCKET,
+        {
+          public: true,
+          fileSizeLimit: 5242880, // 5MB
+          allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'audio/mpeg', 'audio/wav', 'audio/webm']
+        }
+      );
+
+      if (createError) {
+        console.error('Error creating bucket:', createError);
+        throw createError;
+      }
+
+      console.log(`✅ Bucket created successfully: ${PROFILE_BUCKET}`);
+    } else {
+      console.log(`✅ Bucket already exists: ${PROFILE_BUCKET}`);
+    }
+
+    bucketVerified = true;
+  } catch (error) {
+    console.error('Error ensuring bucket exists:', error);
+    throw error;
+  }
+}
+
 /**
  * Upload a file to Supabase Storage
  * @param file - File buffer to upload
@@ -62,6 +116,9 @@ export async function uploadToSupabase(
   mimetype: string
 ): Promise<string> {
   try {
+    // Ensure bucket exists before uploading
+    await ensureBucketExists();
+
     // Get admin client lazily
     const supabaseAdmin = getSupabaseAdminClient();
 

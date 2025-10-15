@@ -1,18 +1,31 @@
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { BookOpen, Calendar, Droplets, Leaf, ArrowLeft, Plus } from "lucide-react";
+import { BookOpen, Calendar, Droplets, Leaf, ArrowLeft, Plus, Trash2, UserX } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useStorage } from "@/hooks/use-storage";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 export default function PlantProfile() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
-  const { currentUser } = useStorage();
+  const { currentUser, clearStorage } = useStorage();
+  const [showDeleteUserDialog, setShowDeleteUserDialog] = useState(false);
+  const [showDeleteEntryDialog, setShowDeleteEntryDialog] = useState(false);
+  const [entryToDelete, setEntryToDelete] = useState<string | null>(null);
 
   const isOnboarding = new URLSearchParams(window.location.search).get('onboarding') === 'true';
 
@@ -25,6 +38,84 @@ export default function PlantProfile() {
     queryKey: ['/api/users', currentUser?.id, 'journal-entries'],
     enabled: !!currentUser?.id,
   });
+
+  // Delete user mutation (for children to delete themselves)
+  const deleteUserMutation = useMutation({
+    mutationFn: async () => {
+      const response = await fetch(`/api/users/${currentUser?.id}?requestingUserId=${currentUser?.id}`, {
+        method: 'DELETE',
+      });
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || 'Error al eliminar usuario');
+      }
+      return response.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "Usuario eliminado",
+        description: "Tu usuario ha sido eliminado exitosamente.",
+      });
+      clearStorage();
+      queryClient.clear();
+      setTimeout(() => {
+        setLocation('/welcome');
+      }, 100);
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Delete journal entry mutation
+  const deleteEntryMutation = useMutation({
+    mutationFn: async (entryId: string) => {
+      const response = await fetch(`/api/journal-entries/${entryId}?requestingUserId=${currentUser?.id}`, {
+        method: 'DELETE',
+      });
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || 'Error al eliminar entrada');
+      }
+      return response.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "Entrada eliminada",
+        description: "La entrada ha sido eliminada exitosamente.",
+      });
+      queryClient.invalidateQueries({ queryKey: ['/api/users', currentUser?.id, 'journal-entries'] });
+      queryClient.invalidateQueries({ queryKey: [`/api/dashboard/${currentUser?.id}`] });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleDeleteUser = () => {
+    deleteUserMutation.mutate();
+  };
+
+  const handleDeleteEntry = (entryId: string) => {
+    setEntryToDelete(entryId);
+    setShowDeleteEntryDialog(true);
+  };
+
+  const confirmDeleteEntry = () => {
+    if (entryToDelete) {
+      deleteEntryMutation.mutate(entryToDelete);
+      setShowDeleteEntryDialog(false);
+      setEntryToDelete(null);
+    }
+  };
 
   // Calculate days since planting (Día 1 = first day, Día 2 = second day, etc.)
   const daysSincePlanting = plant ?
@@ -104,15 +195,27 @@ export default function PlantProfile() {
                   </p>
                 </div>
               </div>
-              <Button
-                size="icon"
-                variant="ghost"
-                onClick={() => setLocation('/new-entry')}
-                className="w-10 h-10 bg-white bg-opacity-20 hover:bg-white hover:bg-opacity-30"
-                data-testid="button-new-entry"
-              >
-                <Plus className="w-5 h-5 text-white" />
-              </Button>
+              <div className="flex items-center space-x-2">
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={() => setLocation('/new-entry')}
+                  className="w-10 h-10 bg-white bg-opacity-20 hover:bg-white hover:bg-opacity-30"
+                  data-testid="button-new-entry"
+                >
+                  <Plus className="w-5 h-5 text-white" />
+                </Button>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={() => setShowDeleteUserDialog(true)}
+                  className="w-10 h-10 bg-red-500 bg-opacity-80 hover:bg-red-600 hover:bg-opacity-90"
+                  title="Eliminar mi usuario"
+                  data-testid="button-delete-user"
+                >
+                  <UserX className="w-5 h-5 text-white" />
+                </Button>
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -192,6 +295,15 @@ export default function PlantProfile() {
                               </Badge>
                             </div>
                           </div>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-red-500 hover:text-red-600 hover:bg-red-50"
+                            onClick={() => handleDeleteEntry(entry.id)}
+                            data-testid="button-delete-entry"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
                         </div>
 
                         {/* Entry Photo */}
@@ -237,6 +349,48 @@ export default function PlantProfile() {
           </Card>
         )}
       </div>
+
+      {/* Delete User Confirmation Dialog */}
+      <AlertDialog open={showDeleteUserDialog} onOpenChange={setShowDeleteUserDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Eliminar tu usuario?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Esta acción eliminará permanentemente tu usuario <strong>{currentUser?.alias}</strong> y todos tus datos asociados (planta, entradas, logros, etc.). Esta acción no se puede deshacer.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteUser}
+              className="bg-red-500 hover:bg-red-600"
+            >
+              Eliminar mi usuario
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Delete Entry Confirmation Dialog */}
+      <AlertDialog open={showDeleteEntryDialog} onOpenChange={setShowDeleteEntryDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Eliminar entrada?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Esta acción eliminará permanentemente esta entrada de tu bitácora. Esta acción no se puede deshacer.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setEntryToDelete(null)}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmDeleteEntry}
+              className="bg-red-500 hover:bg-red-600"
+            >
+              Eliminar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -1,11 +1,23 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation, useRoute } from "wouter";
-import { ArrowLeft, Calendar, Star, BookOpen, Sprout, Trophy, Award, ShoppingBag } from "lucide-react";
+import { ArrowLeft, Calendar, Star, BookOpen, Sprout, Trophy, Award, ShoppingBag, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useStorage } from "@/hooks/use-storage";
+import { useToast } from "@/hooks/use-toast";
+import { queryClient } from "@/lib/queryClient";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 interface JournalEntry {
   id: string;
@@ -91,10 +103,14 @@ const COLOR_THEMES = [
 ];
 
 export default function ChildProfile() {
-  const { currentUser } = useStorage();
+  const { currentUser, clearStorage } = useStorage();
   const [, setLocation] = useLocation();
   const [, params] = useRoute("/facilitator/child/:id");
   const [emotionFilter, setEmotionFilter] = useState("");
+  const [showDeleteUserDialog, setShowDeleteUserDialog] = useState(false);
+  const [showDeleteEntryDialog, setShowDeleteEntryDialog] = useState(false);
+  const [entryToDelete, setEntryToDelete] = useState<string | null>(null);
+  const { toast } = useToast();
 
   const childId = params?.id;
 
@@ -112,6 +128,82 @@ export default function ChildProfile() {
     queryKey: ['/api/emotions'],
     enabled: !!currentUser?.id,
   });
+
+  // Delete user mutation
+  const deleteUserMutation = useMutation({
+    mutationFn: async (userId: string) => {
+      const response = await fetch(`/api/users/${userId}?requestingUserId=${currentUser?.id}`, {
+        method: 'DELETE',
+      });
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || 'Error al eliminar usuario');
+      }
+      return response.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "Usuario eliminado",
+        description: "El usuario ha sido eliminado exitosamente.",
+      });
+      queryClient.invalidateQueries({ queryKey: ['/api/facilitator/dashboard'] });
+      setLocation('/facilitator/dashboard');
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Delete journal entry mutation
+  const deleteEntryMutation = useMutation({
+    mutationFn: async (entryId: string) => {
+      const response = await fetch(`/api/journal-entries/${entryId}?requestingUserId=${currentUser?.id}`, {
+        method: 'DELETE',
+      });
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || 'Error al eliminar entrada');
+      }
+      return response.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "Entrada eliminada",
+        description: "La entrada ha sido eliminada exitosamente.",
+      });
+      queryClient.invalidateQueries({ queryKey: [`/api/facilitator/child/${childId}`] });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleDeleteUser = () => {
+    if (childId) {
+      deleteUserMutation.mutate(childId);
+    }
+  };
+
+  const handleDeleteEntry = (entryId: string) => {
+    setEntryToDelete(entryId);
+    setShowDeleteEntryDialog(true);
+  };
+
+  const confirmDeleteEntry = () => {
+    if (entryToDelete) {
+      deleteEntryMutation.mutate(entryToDelete);
+      setShowDeleteEntryDialog(false);
+      setEntryToDelete(null);
+    }
+  };
 
   if (!currentUser || currentUser.role !== 'facilitator') {
     setLocation('/welcome');
@@ -228,7 +320,15 @@ export default function ChildProfile() {
                 <ArrowLeft className="w-4 h-4 text-white" />
               </Button>
               <h2 className="text-sm opacity-90">Perfil del Niño</h2>
-              <div className="w-8" /> {/* Spacer for centering */}
+              <Button
+                size="icon"
+                variant="ghost"
+                className="w-8 h-8 bg-red-500 bg-opacity-80 hover:bg-red-600 hover:bg-opacity-90"
+                onClick={() => setShowDeleteUserDialog(true)}
+                title="Eliminar usuario"
+              >
+                <Trash2 className="w-4 h-4 text-white" />
+              </Button>
             </div>
             <div className="flex items-center space-x-4">
               <div className={`w-16 h-16 ${childColorTheme.color} rounded-full flex items-center justify-center shadow-lg`}>
@@ -470,11 +570,20 @@ export default function ChildProfile() {
                           />
                         )}
 
-                        <div className="flex items-center space-x-2 mt-2">
+                        <div className="flex items-center justify-between mt-2">
                           <Badge variant="outline" className="text-xs">
                             <Star className="w-3 h-3 mr-1" />
                             +{entry.pointsEarned} pts
                           </Badge>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-8 text-red-500 hover:text-red-600 hover:bg-red-50"
+                            onClick={() => handleDeleteEntry(entry.id)}
+                          >
+                            <Trash2 className="w-4 h-4 mr-1" />
+                            Eliminar
+                          </Button>
                         </div>
                       </div>
                     </div>
@@ -485,6 +594,48 @@ export default function ChildProfile() {
           )}
         </div>
       </div>
+
+      {/* Delete User Confirmation Dialog */}
+      <AlertDialog open={showDeleteUserDialog} onOpenChange={setShowDeleteUserDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Eliminar usuario?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Esta acción eliminará permanentemente el usuario <strong>{child.alias}</strong> y todos sus datos asociados (plantas, entradas, logros, etc.). Esta acción no se puede deshacer.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteUser}
+              className="bg-red-500 hover:bg-red-600"
+            >
+              Eliminar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Delete Entry Confirmation Dialog */}
+      <AlertDialog open={showDeleteEntryDialog} onOpenChange={setShowDeleteEntryDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Eliminar entrada?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Esta acción eliminará permanentemente esta entrada de la bitácora. Esta acción no se puede deshacer.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setEntryToDelete(null)}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmDeleteEntry}
+              className="bg-red-500 hover:bg-red-600"
+            >
+              Eliminar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

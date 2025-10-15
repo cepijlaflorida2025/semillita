@@ -762,25 +762,124 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Delete user endpoint (for facilitators to delete children, and for children to delete themselves)
+  app.delete('/api/users/:userId', async (req, res) => {
+    try {
+      const userIdToDelete = req.params.userId;
+      const requestingUserId = req.body.requestingUserId || req.query.requestingUserId;
+
+      if (!requestingUserId) {
+        return res.status(400).json({ message: 'Requesting user ID is required' });
+      }
+
+      // Get the user making the request
+      const requestingUser = await storage.getUser(requestingUserId as string);
+      if (!requestingUser) {
+        return res.status(404).json({ message: 'Requesting user not found' });
+      }
+
+      // Get the user to be deleted
+      const userToDelete = await storage.getUser(userIdToDelete);
+      if (!userToDelete) {
+        return res.status(404).json({ message: 'User to delete not found' });
+      }
+
+      // Authorization check:
+      // 1. Facilitators can delete child users
+      // 2. Children can delete themselves
+      const isFacilitatorDeletingChild = requestingUser.role === 'facilitator' && userToDelete.role === 'child';
+      const isUserDeletingThemselves = requestingUserId === userIdToDelete;
+
+      if (!isFacilitatorDeletingChild && !isUserDeletingThemselves) {
+        return res.status(403).json({
+          message: 'No tienes permiso para eliminar este usuario',
+          code: 'FORBIDDEN'
+        });
+      }
+
+      // Delete the user (cascade will delete all related data)
+      await storage.deleteUser(userIdToDelete);
+
+      res.json({
+        message: 'Usuario eliminado exitosamente',
+        deletedUserId: userIdToDelete
+      });
+    } catch (error) {
+      console.error('Error deleting user:', error);
+      res.status(500).json({ message: 'Error al eliminar usuario' });
+    }
+  });
+
+  // Delete journal entry endpoint (for facilitators and children)
+  app.delete('/api/journal-entries/:entryId', async (req, res) => {
+    try {
+      const entryId = req.params.entryId;
+      const requestingUserId = req.body.requestingUserId || req.query.requestingUserId;
+
+      if (!requestingUserId) {
+        return res.status(400).json({ message: 'Requesting user ID is required' });
+      }
+
+      // Get the user making the request
+      const requestingUser = await storage.getUser(requestingUserId as string);
+      if (!requestingUser) {
+        return res.status(404).json({ message: 'Requesting user not found' });
+      }
+
+      // Get the journal entry to be deleted
+      const entry = await storage.getJournalEntryById(entryId);
+      if (!entry) {
+        return res.status(404).json({ message: 'Entrada no encontrada' });
+      }
+
+      // Authorization check:
+      // 1. Facilitators can delete any journal entry from children
+      // 2. Children can delete their own entries
+      const userToDelete = await storage.getUser(entry.userId);
+      const isFacilitatorDeletingChildEntry = requestingUser.role === 'facilitator' && userToDelete?.role === 'child';
+      const isUserDeletingOwnEntry = requestingUserId === entry.userId;
+
+      if (!isFacilitatorDeletingChildEntry && !isUserDeletingOwnEntry) {
+        return res.status(403).json({
+          message: 'No tienes permiso para eliminar esta entrada',
+          code: 'FORBIDDEN'
+        });
+      }
+
+      // Delete the journal entry
+      await storage.deleteJournalEntry(entryId);
+
+      res.json({
+        message: 'Entrada eliminada exitosamente',
+        deletedEntryId: entryId
+      });
+    } catch (error) {
+      console.error('Error deleting journal entry:', error);
+      res.status(500).json({ message: 'Error al eliminar entrada' });
+    }
+  });
+
   // Facilitator dashboard endpoint
   app.get('/api/facilitator/dashboard', async (req, res) => {
     try {
+      console.log(`📥 [GET /api/facilitator/dashboard] Request started at ${new Date().toISOString()}`);
       // Run default data initialization in background, don't wait
       ensureDefaultData();
 
       // Get all children users with their latest emotion
       const children = await storage.getAllChildren();
 
-      // Batch all queries for better performance
-      const childrenWithEmotions = await Promise.all(
-        children.map(async (child) => {
-          // Run both queries in parallel for each child
+      // Batch all queries for better performance but tolerate slow/failing child queries
+      console.log(`🔍 [DASHBOARD] Fetching data for ${children.length} children`);
+      const childrenPromises = children.map(async (child) => {
+        const childStart = Date.now();
+        try {
           const [latestEntry, journalEntriesCount] = await Promise.all([
             storage.getLatestJournalEntry(child.id),
             storage.getJournalEntriesCount(child.id),
           ]);
 
-          return {
+          const result = {
             id: child.id,
             alias: child.alias,
             age: child.age,
@@ -792,8 +891,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
             points: child.points || 0,
             createdAt: child.createdAt,
           };
-        })
-      );
+
+          const dur = Date.now() - childStart;
+          if (dur > 1000) console.warn(`⚠️ [DASHBOARD] Slow child data fetch for ${child.id}: ${dur}ms`);
+          return { status: 'fulfilled', value: result } as const;
+        } catch (err) {
+          const dur = Date.now() - childStart;
+          console.error(`❌ [DASHBOARD] Error fetching data for child ${child.id} after ${dur}ms:`, err);
+          return { status: 'rejected', reason: err } as const;
+        }
+      });
+
+      const settled = await Promise.all(childrenPromises);
+      const childrenWithEmotions = settled
+        .filter((r): r is { status: 'fulfilled'; value: any } => r.status === 'fulfilled')
+        .map(r => r.value);
 
       res.json({
         children: childrenWithEmotions,
