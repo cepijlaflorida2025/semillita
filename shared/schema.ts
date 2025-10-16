@@ -21,23 +21,28 @@ export const users = pgTable("users", {
   colorTheme: varchar("color_theme", { length: 50 }).default("green"),
   points: integer("points").default(0),
   daysSincePlanting: integer("days_since_planting").default(0),
-  
+
   // Age validation
   age: integer("age").notNull().default(10), // Required for COPPA compliance, default 10 years
-  
+
   // Context and role
   context: varchar("context", { length: 20 }).notNull().default("home"), // "workshop" or "home"
   role: varchar("role", { length: 20 }).notNull().default("child"), // "child", "professional", "facilitator"
-  
+
   // Enhanced parental consent system
   parentalConsent: boolean("parental_consent").default(false),
   parentEmail: varchar("parent_email", { length: 255 }),
   parentalConsentDate: timestamp("parental_consent_date"),
   consentVerified: boolean("consent_verified").default(false),
-  
+
   // Legacy workshop mode (maintaining backward compatibility)
   isWorkshopMode: boolean("is_workshop_mode").default(false),
-  
+
+  // Accessibility settings per user
+  accessibilitySettings: json("accessibility_settings").default({
+    fontSize: 'medium'
+  }),
+
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 }, (users) => ({

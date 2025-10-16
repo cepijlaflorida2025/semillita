@@ -16,7 +16,7 @@ import { useStorage } from "@/hooks/use-storage";
 
 const loginSchema = z.object({
   alias: z.string().min(2, "El nombre debe tener al menos 2 caracteres"),
-  password: z.string().min(4, "La contraseña debe tener al menos 4 caracteres"),
+  password: z.string().min(6, "La contraseña debe tener al menos 6 caracteres"),
 });
 
 type LoginForm = z.infer<typeof loginSchema>;

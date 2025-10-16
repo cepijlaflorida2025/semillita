@@ -7,7 +7,8 @@ import { eq } from "drizzle-orm";
 import multer from "multer";
 import { z } from "zod";
 import { randomBytes } from "crypto";
-import { uploadToSupabase, saveProfileHistory, getProfileHistory } from "./supabase.js";
+import { uploadToSupabase, saveProfileHistory, getProfileHistory, getStorageStats, getStorageStatsByUser } from "./supabase.js";
+import sharp from "sharp";
 
 // Configure multer for file uploads
 const upload = multer({
@@ -32,6 +33,56 @@ function generateShareCode(): string {
 // Mock file storage (fallback for when Supabase is not configured)
 const mockFileStorage = new Map<string, Buffer>();
 
+/**
+ * Reescala una imagen a 360p (altura máxima de 360px) manteniendo el aspect ratio
+ * @param buffer - Buffer de la imagen original
+ * @param mimetype - Tipo MIME de la imagen
+ * @returns Buffer de la imagen reescalada
+ */
+async function resizeImageTo360p(buffer: Buffer, mimetype: string): Promise<Buffer> {
+  try {
+    // Solo procesar imágenes
+    if (!mimetype.startsWith('image/')) {
+      return buffer;
+    }
+
+    // Obtener metadata de la imagen original
+    const metadata = await sharp(buffer).metadata();
+
+    // Si la imagen ya es menor o igual a 360p, retornar original
+    if (metadata.height && metadata.height <= 360) {
+      console.log(`Imagen ya está en 360p o menor (${metadata.width}x${metadata.height}), usando original`);
+      return buffer;
+    }
+
+    // Reescalar manteniendo aspect ratio con altura máxima de 360px
+    const resizedBuffer = await sharp(buffer)
+      .resize({
+        height: 360,
+        width: undefined, // Mantener aspect ratio
+        fit: 'inside',
+        withoutEnlargement: true, // No agrandar imágenes pequeñas
+      })
+      .jpeg({
+        quality: 85, // Calidad 85% para balance entre tamaño y calidad
+        progressive: true,
+      })
+      .toBuffer();
+
+    const originalSize = buffer.length;
+    const newSize = resizedBuffer.length;
+    const reduction = ((1 - newSize / originalSize) * 100).toFixed(1);
+
+    console.log(`Imagen reescalada: ${originalSize} bytes -> ${newSize} bytes (reducción: ${reduction}%)`);
+    console.log(`Dimensiones originales: ${metadata.width}x${metadata.height} -> Nuevas: auto x 360`);
+
+    return resizedBuffer;
+  } catch (error) {
+    console.error('Error al reescalar imagen, usando original:', error);
+    return buffer; // En caso de error, retornar buffer original
+  }
+}
+
 async function saveFile(
   buffer: Buffer,
   mimetype: string,
@@ -44,8 +95,11 @@ async function saveFile(
   const filename = `${userId || 'anonymous'}/${Date.now()}_${id}.${extension}`;
 
   try {
+    // Reescalar imagen a 360p si es una imagen
+    const processedBuffer = await resizeImageTo360p(buffer, mimetype);
+
     // Try to upload to Supabase first
-    const publicUrl = await uploadToSupabase(buffer, filename, mimetype);
+    const publicUrl = await uploadToSupabase(processedBuffer, filename, mimetype);
 
     // Save to history if userId is provided
     if (userId && type) {
@@ -57,7 +111,8 @@ async function saveFile(
         metadata: {
           filename,
           mimetype,
-          size: buffer.length,
+          size: processedBuffer.length, // Usar tamaño del buffer procesado
+          originalSize: buffer.length, // Guardar tamaño original para referencia
         },
       });
     }
@@ -66,7 +121,8 @@ async function saveFile(
   } catch (error) {
     // Fallback to local storage if Supabase fails
     console.warn('Supabase upload failed, using local storage:', error);
-    mockFileStorage.set(filename, buffer);
+    const processedBuffer = await resizeImageTo360p(buffer, mimetype);
+    mockFileStorage.set(filename, processedBuffer);
     return `/uploads/${filename}`;
   }
 }
@@ -360,6 +416,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(user);
     } catch (error) {
       console.error('Error fetching user:', error);
+      res.status(500).json({ message: 'Server error' });
+    }
+  });
+
+  // Update user accessibility settings
+  app.patch('/api/users/:id/accessibility-settings', async (req, res) => {
+    try {
+      const userId = req.params.id;
+      const { accessibilitySettings } = req.body;
+
+      if (!accessibilitySettings) {
+        return res.status(400).json({ message: 'Accessibility settings are required' });
+      }
+
+      const updatedUser = await storage.updateUserAccessibilitySettings(userId, accessibilitySettings);
+      res.json(updatedUser);
+    } catch (error) {
+      console.error('Error updating accessibility settings:', error);
       res.status(500).json({ message: 'Server error' });
     }
   });
@@ -768,21 +842,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const userIdToDelete = req.params.userId;
       const requestingUserId = req.body.requestingUserId || req.query.requestingUserId;
 
+      console.log(`🗑️ [DELETE /api/users/:userId] Request received`);
+      console.log(`   - User to delete: ${userIdToDelete}`);
+      console.log(`   - Requesting user: ${requestingUserId}`);
+      console.log(`   - Request method: ${req.method}`);
+      console.log(`   - Query params:`, req.query);
+      console.log(`   - Body params:`, req.body);
+
       if (!requestingUserId) {
+        console.error(`❌ [DELETE /api/users/:userId] Missing requesting user ID`);
         return res.status(400).json({ message: 'Requesting user ID is required' });
       }
 
       // Get the user making the request
-      const requestingUser = await storage.getUser(requestingUserId as string);
+      // Try by ID first, then fallback to alias (for backward compatibility)
+      let requestingUser = await storage.getUser(requestingUserId as string);
+
       if (!requestingUser) {
+        // Fallback: try to find by alias
+        console.log(`⚠️ [DELETE /api/users/:userId] User not found by ID, trying by alias: ${requestingUserId}`);
+        requestingUser = await storage.getUserByAlias(requestingUserId as string);
+      }
+
+      if (!requestingUser) {
+        console.error(`❌ [DELETE /api/users/:userId] Requesting user not found (tried ID and alias): ${requestingUserId}`);
         return res.status(404).json({ message: 'Requesting user not found' });
       }
+
+      console.log(`✅ [DELETE /api/users/:userId] Requesting user found: ${requestingUser.alias} (${requestingUser.role})`);
 
       // Get the user to be deleted
       const userToDelete = await storage.getUser(userIdToDelete);
       if (!userToDelete) {
+        console.error(`❌ [DELETE /api/users/:userId] User to delete not found: ${userIdToDelete}`);
         return res.status(404).json({ message: 'User to delete not found' });
       }
+
+      console.log(`✅ [DELETE /api/users/:userId] User to delete found: ${userToDelete.alias} (${userToDelete.role})`);
 
       // Authorization check:
       // 1. Facilitators can delete child users
@@ -790,23 +886,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const isFacilitatorDeletingChild = requestingUser.role === 'facilitator' && userToDelete.role === 'child';
       const isUserDeletingThemselves = requestingUserId === userIdToDelete;
 
+      console.log(`🔐 [DELETE /api/users/:userId] Authorization check:`);
+      console.log(`   - Is facilitator deleting child: ${isFacilitatorDeletingChild}`);
+      console.log(`   - Is user deleting themselves: ${isUserDeletingThemselves}`);
+
       if (!isFacilitatorDeletingChild && !isUserDeletingThemselves) {
+        console.error(`❌ [DELETE /api/users/:userId] Authorization failed`);
         return res.status(403).json({
           message: 'No tienes permiso para eliminar este usuario',
           code: 'FORBIDDEN'
         });
       }
 
+      console.log(`✅ [DELETE /api/users/:userId] Authorization successful, proceeding with deletion`);
+
       // Delete the user (cascade will delete all related data)
       await storage.deleteUser(userIdToDelete);
+
+      console.log(`✅ [DELETE /api/users/:userId] User deletion completed successfully`);
 
       res.json({
         message: 'Usuario eliminado exitosamente',
         deletedUserId: userIdToDelete
       });
     } catch (error) {
-      console.error('Error deleting user:', error);
-      res.status(500).json({ message: 'Error al eliminar usuario' });
+      console.error('❌ [DELETE /api/users/:userId] Error deleting user:', error);
+      res.status(500).json({ message: 'Error al eliminar usuario', error: error instanceof Error ? error.message : 'Unknown error' });
     }
   });
 
@@ -821,7 +926,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Get the user making the request
-      const requestingUser = await storage.getUser(requestingUserId as string);
+      // Try by ID first, then fallback to alias (for backward compatibility)
+      let requestingUser = await storage.getUser(requestingUserId as string);
+
+      if (!requestingUser) {
+        // Fallback: try to find by alias
+        requestingUser = await storage.getUserByAlias(requestingUserId as string);
+      }
+
       if (!requestingUser) {
         return res.status(404).json({ message: 'Requesting user not found' });
       }
@@ -859,59 +971,61 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Facilitator dashboard endpoint
+  // Facilitator dashboard endpoint - OPTIMIZED for local development
   app.get('/api/facilitator/dashboard', async (req, res) => {
     try {
+      const requestStart = Date.now();
       console.log(`📥 [GET /api/facilitator/dashboard] Request started at ${new Date().toISOString()}`);
+
       // Run default data initialization in background, don't wait
       ensureDefaultData();
 
-      // Get all children users with their latest emotion
-      const children = await storage.getAllChildren();
+      // OPTIMIZED: Single query with all stats included (avoids N+1 query problem)
+      console.log(`🔍 [DASHBOARD] Fetching children with stats (optimized single query)...`);
+      const children = await storage.getAllChildrenWithStats();
+      const queryDuration = Date.now() - requestStart;
+      console.log(`✅ [DASHBOARD] Fetched ${children.length} children in ${queryDuration}ms`);
 
-      // Batch all queries for better performance but tolerate slow/failing child queries
-      console.log(`🔍 [DASHBOARD] Fetching data for ${children.length} children`);
-      const childrenPromises = children.map(async (child) => {
-        const childStart = Date.now();
-        try {
-          const [latestEntry, journalEntriesCount] = await Promise.all([
-            storage.getLatestJournalEntry(child.id),
-            storage.getJournalEntriesCount(child.id),
-          ]);
+      // Get storage stats per user
+      console.log(`🔍 [DASHBOARD] Fetching storage stats per user...`);
+      const storageStatsStart = Date.now();
+      const storageStatsByUser = await getStorageStatsByUser();
+      const storageStatsDuration = Date.now() - storageStatsStart;
+      console.log(`✅ [DASHBOARD] Fetched storage stats in ${storageStatsDuration}ms`);
 
-          const result = {
-            id: child.id,
-            alias: child.alias,
-            age: child.age,
-            latestEmotion: latestEntry?.emotion ? {
-              emoji: latestEntry.emotion.emoji,
-              name: latestEntry.emotion.name,
-            } : null,
-            journalEntriesCount,
-            points: child.points || 0,
-            createdAt: child.createdAt,
-          };
+      // Transform data to match expected format
+      const childrenWithEmotions = children.map(child => {
+        const userStorageStats = storageStatsByUser.get(child.id);
 
-          const dur = Date.now() - childStart;
-          if (dur > 1000) console.warn(`⚠️ [DASHBOARD] Slow child data fetch for ${child.id}: ${dur}ms`);
-          return { status: 'fulfilled', value: result } as const;
-        } catch (err) {
-          const dur = Date.now() - childStart;
-          console.error(`❌ [DASHBOARD] Error fetching data for child ${child.id} after ${dur}ms:`, err);
-          return { status: 'rejected', reason: err } as const;
-        }
+        return {
+          id: child.id,
+          alias: child.alias,
+          age: child.age,
+          latestEmotion: child.latestEmotionEmoji ? {
+            emoji: child.latestEmotionEmoji,
+            name: child.latestEmotionName || 'Desconocido',
+          } : null,
+          journalEntriesCount: child.journalEntriesCount,
+          points: child.points || 0,
+          createdAt: child.createdAt,
+          storageUsed: userStorageStats ? {
+            fileCount: userStorageStats.fileCount,
+            estimatedSizeMB: userStorageStats.estimatedSizeMB,
+          } : {
+            fileCount: 0,
+            estimatedSizeMB: 0,
+          },
+        };
       });
 
-      const settled = await Promise.all(childrenPromises);
-      const childrenWithEmotions = settled
-        .filter((r): r is { status: 'fulfilled'; value: any } => r.status === 'fulfilled')
-        .map(r => r.value);
+      const totalDuration = Date.now() - requestStart;
+      console.log(`✅ [DASHBOARD] Request completed in ${totalDuration}ms total`);
 
       res.json({
         children: childrenWithEmotions,
       });
     } catch (error) {
-      console.error('Error fetching facilitator dashboard:', error);
+      console.error('❌ [DASHBOARD] Error fetching facilitator dashboard:', error);
       res.status(500).json({ message: 'Error fetching dashboard data' });
     }
   });
@@ -960,6 +1074,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Error fetching child profile:', error);
       res.status(500).json({ message: 'Error fetching child profile' });
+    }
+  });
+
+  // Storage statistics endpoint (for facilitators)
+  app.get('/api/storage/stats', async (req, res) => {
+    try {
+      console.log('📊 [GET /api/storage/stats] Fetching storage statistics...');
+
+      const stats = await getStorageStats();
+
+      console.log('✅ [GET /api/storage/stats] Storage stats:', stats);
+      res.json(stats);
+    } catch (error) {
+      console.error('❌ [GET /api/storage/stats] Error fetching storage stats:', error);
+      res.status(500).json({
+        message: 'Error fetching storage statistics',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
     }
   });
 

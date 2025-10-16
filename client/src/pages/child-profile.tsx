@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation, useRoute } from "wouter";
-import { ArrowLeft, Calendar, Star, BookOpen, Sprout, Trophy, Award, ShoppingBag, Trash2 } from "lucide-react";
+import { ArrowLeft, Calendar, Star, BookOpen, Sprout, Trophy, Award, ShoppingBag, Trash2, Play, Pause } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -110,6 +110,8 @@ export default function ChildProfile() {
   const [showDeleteUserDialog, setShowDeleteUserDialog] = useState(false);
   const [showDeleteEntryDialog, setShowDeleteEntryDialog] = useState(false);
   const [entryToDelete, setEntryToDelete] = useState<string | null>(null);
+  const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
+  const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(null);
   const { toast } = useToast();
 
   const childId = params?.id;
@@ -203,6 +205,33 @@ export default function ChildProfile() {
       setShowDeleteEntryDialog(false);
       setEntryToDelete(null);
     }
+  };
+
+  const handleAudioPlayback = (audioUrl: string, entryId: string) => {
+    // If same audio is playing, pause it
+    if (playingAudioId === entryId && audioElement) {
+      audioElement.pause();
+      setPlayingAudioId(null);
+      setAudioElement(null);
+      return;
+    }
+
+    // Stop any currently playing audio
+    if (audioElement) {
+      audioElement.pause();
+      setAudioElement(null);
+    }
+
+    // Play new audio
+    const audio = new Audio(audioUrl);
+    audio.play();
+    setPlayingAudioId(entryId);
+    setAudioElement(audio);
+
+    audio.onended = () => {
+      setPlayingAudioId(null);
+      setAudioElement(null);
+    };
   };
 
   if (!currentUser || currentUser.role !== 'facilitator') {
@@ -568,6 +597,48 @@ export default function ChildProfile() {
                             alt="Foto de entrada"
                             className="w-full h-32 object-cover rounded-lg mt-2"
                           />
+                        )}
+
+                        {entry.audioUrl && (
+                          <div className="bg-primary/5 p-3 rounded-lg mt-2">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center space-x-2">
+                                <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                                  playingAudioId === entry.id ? 'bg-primary animate-pulse' : 'bg-primary/20'
+                                }`}>
+                                  {playingAudioId === entry.id ? (
+                                    <Pause className="w-4 h-4 text-white" />
+                                  ) : (
+                                    <Play className="w-4 h-4 text-primary" />
+                                  )}
+                                </div>
+                                <div>
+                                  <p className="text-xs font-semibold text-foreground">Nota de voz</p>
+                                  <p className="text-xs text-muted-foreground">
+                                    {playingAudioId === entry.id ? 'Reproduciendo...' : 'Toca para escuchar'}
+                                  </p>
+                                </div>
+                              </div>
+                              <Button
+                                size="sm"
+                                variant={playingAudioId === entry.id ? "default" : "outline"}
+                                onClick={() => handleAudioPlayback(entry.audioUrl, entry.id)}
+                                className="h-8"
+                              >
+                                {playingAudioId === entry.id ? (
+                                  <>
+                                    <Pause className="w-3 h-3 mr-1" />
+                                    Pausar
+                                  </>
+                                ) : (
+                                  <>
+                                    <Play className="w-3 h-3 mr-1" />
+                                    Reproducir
+                                  </>
+                                )}
+                              </Button>
+                            </div>
+                          </div>
                         )}
 
                         <div className="flex items-center justify-between mt-2">
