@@ -1,11 +1,12 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { Users, ArrowRight, LogOut, HelpCircle, Search, X, Settings, Trash2, HardDrive, RefreshCw } from "lucide-react";
+import { Users, ArrowRight, LogOut, HelpCircle, Search, X, Settings, HardDrive, RefreshCw, ArrowUpDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Progress } from "@/components/ui/progress";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -50,11 +51,15 @@ export default function FacilitatorDashboard() {
   // Filter states
   const [searchTerm, setSearchTerm] = useState("");
   const [emotionFilter, setEmotionFilter] = useState("");
+  const [sortBy, setSortBy] = useState<'name' | 'entries' | 'points'>('name');
 
   // Dialog states
   const [showLogoutDialog, setShowLogoutDialog] = useState(false);
   const [showSettingsDialog, setShowSettingsDialog] = useState(false);
-  const [showDeleteUserDialog, setShowDeleteUserDialog] = useState(false);
+
+  // Loading progress tracking
+  const [loadingProgress, setLoadingProgress] = useState(0);
+  const [loadingSteps, setLoadingSteps] = useState<string[]>([]);
 
   // Accessibility settings
   const [fontSize, setFontSize] = useState<'small' | 'medium' | 'large'>('medium');
@@ -102,9 +107,33 @@ export default function FacilitatorDashboard() {
     staleTime: 60000, // Consider data stale after 60 seconds
   });
 
-  const handleLogoutClick = () => {
-    setShowLogoutDialog(true);
-  };
+  // Track loading progress
+  useEffect(() => {
+    if (isLoading) {
+      setLoadingProgress(33);
+      setLoadingSteps(['⏳ Cargando datos de niños...']);
+    }
+    if (dashboardData) {
+      setLoadingSteps(prev => [...prev, '✓ Datos de niños cargados']);
+      setLoadingProgress(66);
+    }
+  }, [isLoading, dashboardData]);
+
+  useEffect(() => {
+    if (isLoadingStorage) {
+      setLoadingSteps(prev => [...prev, '⏳ Calculando almacenamiento...']);
+    }
+    if (storageStats) {
+      setLoadingSteps(prev => [...prev, '✓ Estadísticas de almacenamiento listas']);
+      setLoadingProgress(100);
+    }
+  }, [isLoadingStorage, storageStats]);
+
+  useEffect(() => {
+    if (emotionsData) {
+      setLoadingSteps(prev => [...prev, '✓ Emociones cargadas']);
+    }
+  }, [emotionsData]);
 
   const confirmLogout = () => {
     toast({
@@ -118,20 +147,6 @@ export default function FacilitatorDashboard() {
     setTimeout(() => {
       setLocation('/welcome');
     }, 100);
-  };
-
-  const handleDeleteUser = () => {
-    setShowDeleteUserDialog(true);
-  };
-
-  const confirmDeleteUser = () => {
-    // For facilitator, just logout (facilitators shouldn't delete themselves from dashboard)
-    toast({
-      title: "Acción no disponible",
-      description: "Los facilitadores no pueden eliminar su propia cuenta desde aquí.",
-      variant: "destructive",
-    });
-    setShowDeleteUserDialog(false);
   };
 
   // Update accessibility settings mutation
@@ -197,6 +212,19 @@ export default function FacilitatorDashboard() {
     );
   }
 
+  // Sort children
+  filteredChildren = [...filteredChildren].sort((a, b) => {
+    switch (sortBy) {
+      case 'entries':
+        return b.journalEntriesCount - a.journalEntriesCount;
+      case 'points':
+        return b.points - a.points;
+      case 'name':
+      default:
+        return a.alias.localeCompare(b.alias);
+    }
+  });
+
   const hasActiveFilters = searchTerm || emotionFilter;
 
   // Get font size class
@@ -217,17 +245,35 @@ export default function FacilitatorDashboard() {
     return null;
   }
 
-  if (isLoading) {
+  if (isLoading || isLoadingStorage) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen gap-4">
+      <div className="flex flex-col items-center justify-center min-h-screen gap-6 p-4">
         <div className="animate-spin">
-          <Users className="w-8 h-8 text-primary" />
+          <Users className="w-12 h-12 text-primary" />
         </div>
-        <div className="text-center">
-          <p className="text-sm font-medium text-foreground">Cargando dashboard...</p>
-          <p className="text-xs text-muted-foreground mt-1">
-            Obteniendo información de los niños
-          </p>
+        <div className="w-full max-w-md space-y-4">
+          <div className="text-center">
+            <p className="text-base font-semibold text-foreground">Cargando dashboard...</p>
+            <p className="text-sm text-muted-foreground mt-1">
+              {loadingProgress}% completado
+            </p>
+          </div>
+
+          {/* Progress Bar */}
+          <Progress value={loadingProgress} className="w-full" />
+
+          {/* Loading Steps */}
+          <div className="space-y-2 text-sm">
+            {loadingSteps.map((step, index) => (
+              <div
+                key={index}
+                className="flex items-center gap-2 text-muted-foreground animate-in fade-in slide-in-from-left-2"
+                style={{ animationDelay: `${index * 100}ms` }}
+              >
+                <span>{step}</span>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     );
@@ -284,86 +330,6 @@ export default function FacilitatorDashboard() {
                   <Settings className="w-4 h-4 text-white" />
                 </Button>
               </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Filters Card */}
-        <Card>
-          <CardContent className="p-4 space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="font-semibold text-foreground">Filtros</h3>
-              {hasActiveFilters && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={handleClearFilters}
-                  className="h-8 text-xs"
-                >
-                  <X className="w-3 h-3 mr-1" />
-                  Limpiar
-                </Button>
-              )}
-            </div>
-
-            {/* Search by name */}
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input
-                placeholder="Buscar por nombre..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10"
-              />
-            </div>
-
-            {/* Emotion filter */}
-            <div className="space-y-2">
-              <label className="text-xs text-muted-foreground font-semibold">
-                Filtrar por emoción:
-              </label>
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  variant={emotionFilter === "" ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => setEmotionFilter("")}
-                  className="h-9"
-                >
-                  Todas
-                </Button>
-                {emotions.map((emotion) => (
-                  <Button
-                    key={emotion.id}
-                    variant={emotionFilter === emotion.name ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setEmotionFilter(emotion.name)}
-                    className="h-9"
-                  >
-                    <span className="mr-1">{emotion.emoji}</span>
-                    {emotion.name}
-                  </Button>
-                ))}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Stats Card */}
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">
-                  {hasActiveFilters ? 'Niños Filtrados' : 'Total de Niños'}
-                </p>
-                <p className="text-2xl font-bold text-primary">{filteredChildren.length}</p>
-                {hasActiveFilters && allChildren.length !== filteredChildren.length && (
-                  <p className="text-xs text-muted-foreground mt-1">
-                    de {allChildren.length} totales
-                  </p>
-                )}
-              </div>
-              <Users className="w-8 h-8 text-primary opacity-50" />
             </div>
           </CardContent>
         </Card>
@@ -433,6 +399,127 @@ export default function FacilitatorDashboard() {
                   No se pudo cargar la información de almacenamiento
                 </p>
               )}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Stats Card - Niños Registrados */}
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-muted-foreground">
+                  {hasActiveFilters ? 'Niños Filtrados' : 'Total de Niños'}
+                </p>
+                <p className="text-2xl font-bold text-primary">{filteredChildren.length}</p>
+                {hasActiveFilters && allChildren.length !== filteredChildren.length && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    de {allChildren.length} totales
+                  </p>
+                )}
+              </div>
+              <Users className="w-8 h-8 text-primary opacity-50" />
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Filters and Sort Card */}
+        <Card>
+          <CardContent className="p-4 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-semibold text-foreground">Filtros y Ordenamiento</h3>
+              {hasActiveFilters && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleClearFilters}
+                  className="h-8 text-xs"
+                >
+                  <X className="w-3 h-3 mr-1" />
+                  Limpiar
+                </Button>
+              )}
+            </div>
+
+            {/* Search by name */}
+            <div className="space-y-2">
+              <label className="text-xs text-muted-foreground font-semibold">
+                Buscar:
+              </label>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input
+                  placeholder="Buscar por nombre..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="pl-10"
+                />
+              </div>
+            </div>
+
+            {/* Emotion filter */}
+            <div className="space-y-2">
+              <label className="text-xs text-muted-foreground font-semibold">
+                Filtrar por emoción:
+              </label>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant={emotionFilter === "" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setEmotionFilter("")}
+                  className="h-9"
+                >
+                  Todas
+                </Button>
+                {emotions.map((emotion) => (
+                  <Button
+                    key={emotion.id}
+                    variant={emotionFilter === emotion.name ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setEmotionFilter(emotion.name)}
+                    className="h-9"
+                  >
+                    <span className="mr-1">{emotion.emoji}</span>
+                    {emotion.name}
+                  </Button>
+                ))}
+              </div>
+            </div>
+
+            {/* Sort options */}
+            <div className="space-y-2">
+              <label className="text-xs text-muted-foreground font-semibold">
+                Ordenar por:
+              </label>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant={sortBy === "name" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setSortBy("name")}
+                  className="h-9"
+                >
+                  <ArrowUpDown className="w-3 h-3 mr-1" />
+                  Nombre
+                </Button>
+                <Button
+                  variant={sortBy === "entries" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setSortBy("entries")}
+                  className="h-9"
+                >
+                  <ArrowUpDown className="w-3 h-3 mr-1" />
+                  Registros
+                </Button>
+                <Button
+                  variant={sortBy === "points" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setSortBy("points")}
+                  className="h-9"
+                >
+                  <ArrowUpDown className="w-3 h-3 mr-1" />
+                  Puntos
+                </Button>
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -524,71 +611,71 @@ export default function FacilitatorDashboard() {
           )}
         </div>
 
-        {/* Account Section at Bottom */}
-        <Card>
-          <CardContent className="p-4">
-            <h3 className="font-semibold text-foreground mb-4">Cuenta</h3>
-            <div className="space-y-3">
-              <Button
-                variant="outline"
-                className="w-full justify-start"
-                onClick={handleLogoutClick}
-              >
-                <LogOut className="w-4 h-4 mr-2" />
-                Cerrar sesión
-              </Button>
-              <Button
-                variant="destructive"
-                className="w-full justify-start"
-                onClick={handleDeleteUser}
-              >
-                <Trash2 className="w-4 h-4 mr-2" />
-                Eliminar mi cuenta
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
       </div>
 
       {/* Settings Dialog */}
       <AlertDialog open={showSettingsDialog} onOpenChange={setShowSettingsDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Ajustes de Accesibilidad</AlertDialogTitle>
+            <AlertDialogTitle>Ajustes</AlertDialogTitle>
             <AlertDialogDescription>
-              Personaliza la apariencia de la aplicación para mejorar tu experiencia.
+              Personaliza la apariencia de la aplicación y gestiona tu cuenta.
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <div className="space-y-4 py-4">
-            {/* Font Size */}
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Tamaño de fuente</label>
-              <div className="flex gap-2">
-                <Button
-                  variant={fontSize === 'small' ? 'default' : 'outline'}
-                  size="sm"
-                  onClick={() => handleFontSizeChange('small')}
-                  className="flex-1"
-                >
-                  Pequeño
-                </Button>
-                <Button
-                  variant={fontSize === 'medium' ? 'default' : 'outline'}
-                  size="sm"
-                  onClick={() => handleFontSizeChange('medium')}
-                  className="flex-1"
-                >
-                  Mediano
-                </Button>
-                <Button
-                  variant={fontSize === 'large' ? 'default' : 'outline'}
-                  size="sm"
-                  onClick={() => handleFontSizeChange('large')}
-                  className="flex-1"
-                >
-                  Grande
-                </Button>
+          <div className="space-y-6 py-4">
+            {/* Accessibility Section */}
+            <div className="space-y-4">
+              <h3 className="text-sm font-semibold text-foreground">Accesibilidad</h3>
+
+              {/* Font Size */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-muted-foreground">Tamaño de fuente</label>
+                <div className="flex gap-2">
+                  <Button
+                    variant={fontSize === 'small' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => handleFontSizeChange('small')}
+                    className="flex-1"
+                  >
+                    Pequeño
+                  </Button>
+                  <Button
+                    variant={fontSize === 'medium' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => handleFontSizeChange('medium')}
+                    className="flex-1"
+                  >
+                    Mediano
+                  </Button>
+                  <Button
+                    variant={fontSize === 'large' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => handleFontSizeChange('large')}
+                    className="flex-1"
+                  >
+                    Grande
+                  </Button>
+                </div>
               </div>
+            </div>
+
+            {/* Divider */}
+            <div className="border-t border-border" />
+
+            {/* Account Section */}
+            <div className="space-y-3">
+              <h3 className="text-sm font-semibold text-foreground">Cuenta</h3>
+              <Button
+                variant="outline"
+                className="w-full justify-start text-destructive hover:text-destructive hover:bg-destructive/10"
+                onClick={() => {
+                  setShowSettingsDialog(false);
+                  setShowLogoutDialog(true);
+                }}
+              >
+                <LogOut className="w-4 h-4 mr-2" />
+                Cerrar sesión
+              </Button>
             </div>
           </div>
           <AlertDialogFooter>
@@ -615,21 +702,6 @@ export default function FacilitatorDashboard() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Delete User Confirmation Dialog */}
-      <AlertDialog open={showDeleteUserDialog} onOpenChange={setShowDeleteUserDialog}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>¿Eliminar cuenta?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Los facilitadores no pueden eliminar su propia cuenta desde el dashboard.
-              Por favor contacta al administrador del sistema si necesitas eliminar tu cuenta.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Entendido</AlertDialogCancel>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   );
 }

@@ -98,10 +98,6 @@ export default function Dashboard() {
     setShowToast(true);
   };
 
-  const handleLogoutClick = () => {
-    setShowLogoutDialog(true);
-  };
-
   const confirmLogout = () => {
     // Show success notification using global toast
     toast({
@@ -652,30 +648,6 @@ export default function Dashboard() {
           </CardContent>
         </Card>
 
-        {/* Account Section at Bottom */}
-        <Card>
-          <CardContent className="p-6">
-            <h3 className="font-semibold text-foreground mb-4">Cuenta</h3>
-            <div className="space-y-3">
-              <Button
-                variant="outline"
-                className="w-full justify-start"
-                onClick={handleLogoutClick}
-              >
-                <LogOut className="w-4 h-4 mr-2" />
-                Cerrar sesión
-              </Button>
-              <Button
-                variant="destructive"
-                className="w-full justify-start"
-                onClick={() => setShowDeleteUserDialog(true)}
-              >
-                <Trash2 className="w-4 h-4 mr-2" />
-                Eliminar mi cuenta
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
       </main>
 
       {/* Bottom Navigation */}
@@ -702,41 +674,76 @@ export default function Dashboard() {
       <AlertDialog open={showSettingsDialog} onOpenChange={setShowSettingsDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Ajustes de Accesibilidad</AlertDialogTitle>
+            <AlertDialogTitle>Ajustes</AlertDialogTitle>
             <AlertDialogDescription>
-              Personaliza la apariencia de la aplicación para mejorar tu experiencia.
+              Personaliza la apariencia de la aplicación y gestiona tu cuenta.
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <div className="space-y-4 py-4">
-            {/* Font Size */}
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Tamaño de fuente</label>
-              <div className="flex gap-2">
-                <Button
-                  variant={fontSize === 'small' ? 'default' : 'outline'}
-                  size="sm"
-                  onClick={() => handleFontSizeChange('small')}
-                  className="flex-1"
-                >
-                  Pequeño
-                </Button>
-                <Button
-                  variant={fontSize === 'medium' ? 'default' : 'outline'}
-                  size="sm"
-                  onClick={() => handleFontSizeChange('medium')}
-                  className="flex-1"
-                >
-                  Mediano
-                </Button>
-                <Button
-                  variant={fontSize === 'large' ? 'default' : 'outline'}
-                  size="sm"
-                  onClick={() => handleFontSizeChange('large')}
-                  className="flex-1"
-                >
-                  Grande
-                </Button>
+          <div className="space-y-6 py-4">
+            {/* Accessibility Section */}
+            <div className="space-y-4">
+              <h3 className="text-sm font-semibold text-foreground">Accesibilidad</h3>
+
+              {/* Font Size */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-muted-foreground">Tamaño de fuente</label>
+                <div className="flex gap-2">
+                  <Button
+                    variant={fontSize === 'small' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => handleFontSizeChange('small')}
+                    className="flex-1"
+                  >
+                    Pequeño
+                  </Button>
+                  <Button
+                    variant={fontSize === 'medium' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => handleFontSizeChange('medium')}
+                    className="flex-1"
+                  >
+                    Mediano
+                  </Button>
+                  <Button
+                    variant={fontSize === 'large' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => handleFontSizeChange('large')}
+                    className="flex-1"
+                  >
+                    Grande
+                  </Button>
+                </div>
               </div>
+            </div>
+
+            {/* Divider */}
+            <div className="border-t border-border" />
+
+            {/* Account Section */}
+            <div className="space-y-3">
+              <h3 className="text-sm font-semibold text-foreground">Cuenta</h3>
+              <Button
+                variant="outline"
+                className="w-full justify-start"
+                onClick={() => {
+                  setShowSettingsDialog(false);
+                  setShowLogoutDialog(true);
+                }}
+              >
+                <LogOut className="w-4 h-4 mr-2" />
+                Cerrar sesión
+              </Button>
+              <Button
+                variant="destructive"
+                className="w-full justify-start"
+                onClick={() => {
+                  setShowSettingsDialog(false);
+                  setShowDeleteUserDialog(true);
+                }}
+              >
+                <Trash2 className="w-4 h-4 mr-2" />
+                Eliminar mi cuenta
+              </Button>
             </div>
           </div>
           <AlertDialogFooter>
