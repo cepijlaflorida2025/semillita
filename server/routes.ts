@@ -842,21 +842,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const userIdToDelete = req.params.userId;
       const requestingUserId = req.body.requestingUserId || req.query.requestingUserId;
 
+      console.log(`🗑️ [DELETE /api/users/:userId] Request received`);
+      console.log(`   - User to delete: ${userIdToDelete}`);
+      console.log(`   - Requesting user: ${requestingUserId}`);
+      console.log(`   - Request method: ${req.method}`);
+      console.log(`   - Query params:`, req.query);
+      console.log(`   - Body params:`, req.body);
+
       if (!requestingUserId) {
+        console.error(`❌ [DELETE /api/users/:userId] Missing requesting user ID`);
         return res.status(400).json({ message: 'Requesting user ID is required' });
       }
 
       // Get the user making the request
-      const requestingUser = await storage.getUser(requestingUserId as string);
+      // Try by ID first, then fallback to alias (for backward compatibility)
+      let requestingUser = await storage.getUser(requestingUserId as string);
+
       if (!requestingUser) {
+        // Fallback: try to find by alias
+        console.log(`⚠️ [DELETE /api/users/:userId] User not found by ID, trying by alias: ${requestingUserId}`);
+        requestingUser = await storage.getUserByAlias(requestingUserId as string);
+      }
+
+      if (!requestingUser) {
+        console.error(`❌ [DELETE /api/users/:userId] Requesting user not found (tried ID and alias): ${requestingUserId}`);
         return res.status(404).json({ message: 'Requesting user not found' });
       }
+
+      console.log(`✅ [DELETE /api/users/:userId] Requesting user found: ${requestingUser.alias} (${requestingUser.role})`);
 
       // Get the user to be deleted
       const userToDelete = await storage.getUser(userIdToDelete);
       if (!userToDelete) {
+        console.error(`❌ [DELETE /api/users/:userId] User to delete not found: ${userIdToDelete}`);
         return res.status(404).json({ message: 'User to delete not found' });
       }
+
+      console.log(`✅ [DELETE /api/users/:userId] User to delete found: ${userToDelete.alias} (${userToDelete.role})`);
 
       // Authorization check:
       // 1. Facilitators can delete child users
@@ -864,23 +886,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const isFacilitatorDeletingChild = requestingUser.role === 'facilitator' && userToDelete.role === 'child';
       const isUserDeletingThemselves = requestingUserId === userIdToDelete;
 
+      console.log(`🔐 [DELETE /api/users/:userId] Authorization check:`);
+      console.log(`   - Is facilitator deleting child: ${isFacilitatorDeletingChild}`);
+      console.log(`   - Is user deleting themselves: ${isUserDeletingThemselves}`);
+
       if (!isFacilitatorDeletingChild && !isUserDeletingThemselves) {
+        console.error(`❌ [DELETE /api/users/:userId] Authorization failed`);
         return res.status(403).json({
           message: 'No tienes permiso para eliminar este usuario',
           code: 'FORBIDDEN'
         });
       }
 
+      console.log(`✅ [DELETE /api/users/:userId] Authorization successful, proceeding with deletion`);
+
       // Delete the user (cascade will delete all related data)
       await storage.deleteUser(userIdToDelete);
+
+      console.log(`✅ [DELETE /api/users/:userId] User deletion completed successfully`);
 
       res.json({
         message: 'Usuario eliminado exitosamente',
         deletedUserId: userIdToDelete
       });
     } catch (error) {
-      console.error('Error deleting user:', error);
-      res.status(500).json({ message: 'Error al eliminar usuario' });
+      console.error('❌ [DELETE /api/users/:userId] Error deleting user:', error);
+      res.status(500).json({ message: 'Error al eliminar usuario', error: error instanceof Error ? error.message : 'Unknown error' });
     }
   });
 
@@ -895,7 +926,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Get the user making the request
-      const requestingUser = await storage.getUser(requestingUserId as string);
+      // Try by ID first, then fallback to alias (for backward compatibility)
+      let requestingUser = await storage.getUser(requestingUserId as string);
+
+      if (!requestingUser) {
+        // Fallback: try to find by alias
+        requestingUser = await storage.getUserByAlias(requestingUserId as string);
+      }
+
       if (!requestingUser) {
         return res.status(404).json({ message: 'Requesting user not found' });
       }

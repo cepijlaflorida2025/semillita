@@ -171,6 +171,88 @@ export async function deleteFromSupabase(filepath: string): Promise<void> {
 }
 
 /**
+ * Delete all files for a user from Supabase Storage
+ * @param userId - User ID whose files should be deleted
+ * @returns Number of files deleted
+ */
+export async function deleteUserFiles(userId: string): Promise<number> {
+  try {
+    console.log(`🗑️ [Delete User Files] Starting deletion for user: ${userId}`);
+    const supabaseAdmin = getSupabaseAdminClient();
+
+    // List all files in the user's folder
+    const { data: files, error: listError } = await supabaseAdmin.storage
+      .from(PROFILE_BUCKET)
+      .list(userId, {
+        limit: 1000,
+        sortBy: { column: 'created_at', order: 'desc' }
+      });
+
+    if (listError) {
+      console.error(`❌ [Delete User Files] Error listing files:`, listError);
+      throw new Error(`Error listing user files: ${listError.message}`);
+    }
+
+    if (!files || files.length === 0) {
+      console.log(`✅ [Delete User Files] No files found for user ${userId}`);
+      return 0;
+    }
+
+    // Create array of file paths to delete
+    const filePaths = files.map(file => `${userId}/${file.name}`);
+
+    console.log(`🗑️ [Delete User Files] Deleting ${filePaths.length} files...`);
+
+    // Delete all files
+    const { data: deleteData, error: deleteError } = await supabaseAdmin.storage
+      .from(PROFILE_BUCKET)
+      .remove(filePaths);
+
+    if (deleteError) {
+      console.error(`❌ [Delete User Files] Error deleting files:`, deleteError);
+      throw new Error(`Error deleting user files: ${deleteError.message}`);
+    }
+
+    console.log(`✅ [Delete User Files] Successfully deleted ${filePaths.length} files for user ${userId}`);
+
+    return filePaths.length;
+  } catch (error) {
+    console.error('❌ [Delete User Files] Error deleting user files:', error);
+    throw error;
+  }
+}
+
+/**
+ * Delete profile history records for a user from Supabase database
+ * @param userId - User ID whose profile history should be deleted
+ */
+export async function deleteUserProfileHistory(userId: string): Promise<void> {
+  try {
+    console.log(`🗑️ [Delete Profile History] Starting deletion for user: ${userId}`);
+    const supabase = getSupabaseClient();
+
+    const { error } = await supabase
+      .from('profile_history')
+      .delete()
+      .eq('user_id', userId);
+
+    if (error) {
+      // If table doesn't exist, log warning but don't fail
+      if (error.code === '42P01') {
+        console.warn('⚠️ profile_history table not found. Skipping...');
+      } else {
+        throw new Error(`Supabase delete error: ${error.message}`);
+      }
+    } else {
+      console.log(`✅ [Delete Profile History] Successfully deleted profile history for user ${userId}`);
+    }
+  } catch (error) {
+    console.error('❌ [Delete Profile History] Error deleting profile history:', error);
+    // Don't throw - we don't want to fail the deletion if history deletion fails
+  }
+}
+
+/**
  * Save profile history record to Supabase database
  * @param profileData - Profile data to save
  */

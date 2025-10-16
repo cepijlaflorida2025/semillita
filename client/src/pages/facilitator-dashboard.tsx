@@ -95,6 +95,9 @@ export default function FacilitatorDashboard() {
     enabled: !!currentUser?.id,
   });
 
+  // State for manual refresh of storage stats
+  const [isRefreshingStorage, setIsRefreshingStorage] = useState(false);
+
   // Fetch storage statistics
   const { data: storageStats, refetch: refetchStorageStats, isLoading: isLoadingStorage } = useQuery<{
     totalSizeBytes: number;
@@ -106,6 +109,29 @@ export default function FacilitatorDashboard() {
     enabled: !!currentUser?.id && currentUser?.role === 'facilitator',
     staleTime: 60000, // Consider data stale after 60 seconds
   });
+
+  // Handle manual refresh of storage stats
+  const handleRefreshStorage = async () => {
+    setIsRefreshingStorage(true);
+    try {
+      await refetchStorageStats();
+      toast({
+        title: "Almacenamiento actualizado",
+        description: "Las estadísticas de almacenamiento se han actualizado correctamente.",
+      });
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "No se pudieron actualizar las estadísticas de almacenamiento.",
+        variant: "destructive",
+      });
+    } finally {
+      // Pequeño delay para que el usuario vea el spinner
+      setTimeout(() => {
+        setIsRefreshingStorage(false);
+      }, 500);
+    }
+  };
 
   // Track loading progress
   useEffect(() => {
@@ -342,23 +368,32 @@ export default function FacilitatorDashboard() {
                 <div className="flex items-center space-x-2">
                   <HardDrive className="w-5 h-5 text-primary" />
                   <h3 className="font-semibold text-foreground">Almacenamiento</h3>
+                  {isRefreshingStorage && (
+                    <span className="text-xs text-muted-foreground animate-pulse">
+                      Actualizando...
+                    </span>
+                  )}
                 </div>
                 <Button
                   size="sm"
                   variant="ghost"
-                  onClick={() => refetchStorageStats()}
-                  disabled={isLoadingStorage}
+                  onClick={handleRefreshStorage}
+                  disabled={isLoadingStorage || isRefreshingStorage}
                   className="h-8"
+                  title="Actualizar estadísticas de almacenamiento"
                 >
-                  <RefreshCw className={`w-4 h-4 ${isLoadingStorage ? 'animate-spin' : ''}`} />
+                  <RefreshCw className={`w-4 h-4 ${(isLoadingStorage || isRefreshingStorage) ? 'animate-spin' : ''}`} />
                 </Button>
               </div>
 
-              {isLoadingStorage ? (
-                <div className="flex items-center justify-center py-4">
+              {(isLoadingStorage || isRefreshingStorage) ? (
+                <div className="flex flex-col items-center justify-center py-6 space-y-2">
                   <div className="animate-spin">
-                    <RefreshCw className="w-6 h-6 text-primary" />
+                    <RefreshCw className="w-8 h-8 text-primary" />
                   </div>
+                  <p className="text-sm text-muted-foreground">
+                    {isRefreshingStorage ? 'Actualizando estadísticas...' : 'Cargando información...'}
+                  </p>
                 </div>
               ) : storageStats ? (
                 <div className="space-y-3">

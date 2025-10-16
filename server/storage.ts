@@ -201,7 +201,37 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteUser(id: string): Promise<void> {
-    await db.delete(users).where(eq(users.id, id));
+    console.log(`🗑️ [Delete User] Starting deletion process for user: ${id}`);
+
+    try {
+      // Import Supabase functions dynamically to avoid circular dependencies
+      const { deleteUserFiles, deleteUserProfileHistory } = await import('./supabase.js');
+
+      // Step 1: Delete all files from Supabase Storage
+      try {
+        const filesDeleted = await deleteUserFiles(id);
+        console.log(`✅ [Delete User] Deleted ${filesDeleted} files from storage`);
+      } catch (error) {
+        console.error('⚠️ [Delete User] Error deleting files (continuing with user deletion):', error);
+      }
+
+      // Step 2: Delete profile history from Supabase
+      try {
+        await deleteUserProfileHistory(id);
+        console.log(`✅ [Delete User] Deleted profile history`);
+      } catch (error) {
+        console.error('⚠️ [Delete User] Error deleting profile history (continuing with user deletion):', error);
+      }
+
+      // Step 3: Delete user from database (cascade will delete related records)
+      await db.delete(users).where(eq(users.id, id));
+      console.log(`✅ [Delete User] User deleted from database (cascade deleted: plants, journal entries, seeds, achievements, notifications, rewards)`);
+
+      console.log(`✅ [Delete User] Complete deletion finished for user: ${id}`);
+    } catch (error) {
+      console.error(`❌ [Delete User] Error during deletion process:`, error);
+      throw error;
+    }
   }
 
   // Plant operations
@@ -350,7 +380,54 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteJournalEntry(id: string): Promise<void> {
-    await db.delete(journalEntries).where(eq(journalEntries.id, id));
+    console.log(`🗑️ [Delete Journal Entry] Starting deletion process for entry: ${id}`);
+
+    try {
+      // First, get the journal entry to extract file URLs
+      const entry = await this.getJournalEntryById(id);
+
+      if (!entry) {
+        console.warn(`⚠️ [Delete Journal Entry] Entry ${id} not found`);
+        return;
+      }
+
+      // Import Supabase functions dynamically to avoid circular dependencies
+      const { deleteFromSupabase } = await import('./supabase.js');
+
+      // Delete photo if exists
+      if (entry.photoUrl) {
+        try {
+          // Extract path from URL (format: https://.../storage/v1/object/public/bucket-name/path/to/file)
+          const photoPath = entry.photoUrl.split('/').slice(-2).join('/'); // userId/filename.ext
+          console.log(`🗑️ [Delete Journal Entry] Deleting photo: ${photoPath}`);
+          await deleteFromSupabase(photoPath);
+          console.log(`✅ [Delete Journal Entry] Photo deleted successfully`);
+        } catch (error) {
+          console.error(`⚠️ [Delete Journal Entry] Error deleting photo (continuing):`, error);
+        }
+      }
+
+      // Delete audio if exists
+      if (entry.audioUrl) {
+        try {
+          // Extract path from URL
+          const audioPath = entry.audioUrl.split('/').slice(-2).join('/'); // userId/filename.ext
+          console.log(`🗑️ [Delete Journal Entry] Deleting audio: ${audioPath}`);
+          await deleteFromSupabase(audioPath);
+          console.log(`✅ [Delete Journal Entry] Audio deleted successfully`);
+        } catch (error) {
+          console.error(`⚠️ [Delete Journal Entry] Error deleting audio (continuing):`, error);
+        }
+      }
+
+      // Delete the journal entry from database
+      await db.delete(journalEntries).where(eq(journalEntries.id, id));
+      console.log(`✅ [Delete Journal Entry] Entry deleted from database: ${id}`);
+
+    } catch (error) {
+      console.error(`❌ [Delete Journal Entry] Error during deletion process:`, error);
+      throw error;
+    }
   }
 
   // Seed operations
