@@ -8,6 +8,7 @@ import multer from "multer";
 import { z } from "zod";
 import { randomBytes } from "crypto";
 import { uploadToSupabase, saveProfileHistory, getProfileHistory, getStorageStats, getStorageStatsByUser } from "./supabase.js";
+import sharp from "sharp";
 
 // Configure multer for file uploads
 const upload = multer({
@@ -32,6 +33,56 @@ function generateShareCode(): string {
 // Mock file storage (fallback for when Supabase is not configured)
 const mockFileStorage = new Map<string, Buffer>();
 
+/**
+ * Reescala una imagen a 360p (altura máxima de 360px) manteniendo el aspect ratio
+ * @param buffer - Buffer de la imagen original
+ * @param mimetype - Tipo MIME de la imagen
+ * @returns Buffer de la imagen reescalada
+ */
+async function resizeImageTo360p(buffer: Buffer, mimetype: string): Promise<Buffer> {
+  try {
+    // Solo procesar imágenes
+    if (!mimetype.startsWith('image/')) {
+      return buffer;
+    }
+
+    // Obtener metadata de la imagen original
+    const metadata = await sharp(buffer).metadata();
+
+    // Si la imagen ya es menor o igual a 360p, retornar original
+    if (metadata.height && metadata.height <= 360) {
+      console.log(`Imagen ya está en 360p o menor (${metadata.width}x${metadata.height}), usando original`);
+      return buffer;
+    }
+
+    // Reescalar manteniendo aspect ratio con altura máxima de 360px
+    const resizedBuffer = await sharp(buffer)
+      .resize({
+        height: 360,
+        width: undefined, // Mantener aspect ratio
+        fit: 'inside',
+        withoutEnlargement: true, // No agrandar imágenes pequeñas
+      })
+      .jpeg({
+        quality: 85, // Calidad 85% para balance entre tamaño y calidad
+        progressive: true,
+      })
+      .toBuffer();
+
+    const originalSize = buffer.length;
+    const newSize = resizedBuffer.length;
+    const reduction = ((1 - newSize / originalSize) * 100).toFixed(1);
+
+    console.log(`Imagen reescalada: ${originalSize} bytes -> ${newSize} bytes (reducción: ${reduction}%)`);
+    console.log(`Dimensiones originales: ${metadata.width}x${metadata.height} -> Nuevas: auto x 360`);
+
+    return resizedBuffer;
+  } catch (error) {
+    console.error('Error al reescalar imagen, usando original:', error);
+    return buffer; // En caso de error, retornar buffer original
+  }
+}
+
 async function saveFile(
   buffer: Buffer,
   mimetype: string,
@@ -44,8 +95,11 @@ async function saveFile(
   const filename = `${userId || 'anonymous'}/${Date.now()}_${id}.${extension}`;
 
   try {
+    // Reescalar imagen a 360p si es una imagen
+    const processedBuffer = await resizeImageTo360p(buffer, mimetype);
+
     // Try to upload to Supabase first
-    const publicUrl = await uploadToSupabase(buffer, filename, mimetype);
+    const publicUrl = await uploadToSupabase(processedBuffer, filename, mimetype);
 
     // Save to history if userId is provided
     if (userId && type) {
@@ -57,7 +111,8 @@ async function saveFile(
         metadata: {
           filename,
           mimetype,
-          size: buffer.length,
+          size: processedBuffer.length, // Usar tamaño del buffer procesado
+          originalSize: buffer.length, // Guardar tamaño original para referencia
         },
       });
     }
@@ -66,7 +121,8 @@ async function saveFile(
   } catch (error) {
     // Fallback to local storage if Supabase fails
     console.warn('Supabase upload failed, using local storage:', error);
-    mockFileStorage.set(filename, buffer);
+    const processedBuffer = await resizeImageTo360p(buffer, mimetype);
+    mockFileStorage.set(filename, processedBuffer);
     return `/uploads/${filename}`;
   }
 }
