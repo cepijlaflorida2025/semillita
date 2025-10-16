@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { BookOpen, Calendar, Droplets, Leaf, ArrowLeft, Plus, Trash2, UserX } from "lucide-react";
+import { BookOpen, Calendar, Droplets, Leaf, ArrowLeft, Plus, Trash2, UserX, Play, Pause } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -26,6 +26,8 @@ export default function PlantProfile() {
   const [showDeleteUserDialog, setShowDeleteUserDialog] = useState(false);
   const [showDeleteEntryDialog, setShowDeleteEntryDialog] = useState(false);
   const [entryToDelete, setEntryToDelete] = useState<string | null>(null);
+  const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
+  const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(null);
 
   const isOnboarding = new URLSearchParams(window.location.search).get('onboarding') === 'true';
 
@@ -115,6 +117,33 @@ export default function PlantProfile() {
       setShowDeleteEntryDialog(false);
       setEntryToDelete(null);
     }
+  };
+
+  const handleAudioPlayback = (audioUrl: string, entryId: string) => {
+    // If same audio is playing, pause it
+    if (playingAudioId === entryId && audioElement) {
+      audioElement.pause();
+      setPlayingAudioId(null);
+      setAudioElement(null);
+      return;
+    }
+
+    // Stop any currently playing audio
+    if (audioElement) {
+      audioElement.pause();
+      setAudioElement(null);
+    }
+
+    // Play new audio
+    const audio = new Audio(audioUrl);
+    audio.play();
+    setPlayingAudioId(entryId);
+    setAudioElement(audio);
+
+    audio.onended = () => {
+      setPlayingAudioId(null);
+      setAudioElement(null);
+    };
   };
 
   // Calculate days since planting (Día 1 = first day, Día 2 = second day, etc.)
@@ -305,6 +334,49 @@ export default function PlantProfile() {
                               className="w-full h-56 object-cover rounded-lg shadow-md"
                               data-testid="img-entry-photo"
                             />
+                          </div>
+                        )}
+
+                        {/* Entry Audio */}
+                        {entry.audioUrl && (
+                          <div className="bg-primary/5 p-4 rounded-lg">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center space-x-3">
+                                <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                                  playingAudioId === entry.id ? 'bg-primary animate-pulse' : 'bg-primary/20'
+                                }`}>
+                                  {playingAudioId === entry.id ? (
+                                    <Pause className="w-5 h-5 text-white" />
+                                  ) : (
+                                    <Play className="w-5 h-5 text-primary" />
+                                  )}
+                                </div>
+                                <div>
+                                  <p className="text-sm font-semibold text-foreground">Nota de voz</p>
+                                  <p className="text-xs text-muted-foreground">
+                                    {playingAudioId === entry.id ? 'Reproduciendo...' : 'Toca para escuchar'}
+                                  </p>
+                                </div>
+                              </div>
+                              <Button
+                                size="sm"
+                                variant={playingAudioId === entry.id ? "default" : "outline"}
+                                onClick={() => handleAudioPlayback(entry.audioUrl, entry.id)}
+                                data-testid="button-play-audio"
+                              >
+                                {playingAudioId === entry.id ? (
+                                  <>
+                                    <Pause className="w-4 h-4 mr-1" />
+                                    Pausar
+                                  </>
+                                ) : (
+                                  <>
+                                    <Play className="w-4 h-4 mr-1" />
+                                    Reproducir
+                                  </>
+                                )}
+                              </Button>
+                            </div>
                           </div>
                         )}
 

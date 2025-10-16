@@ -237,3 +237,184 @@ export async function getProfileHistory(userId: string, limit = 50): Promise<any
     return [];
   }
 }
+
+/**
+ * Get storage usage statistics for the bucket
+ * @returns Object with total size in bytes and number of files
+ *
+ * Note: Due to Supabase Storage API limitations, this function counts files
+ * but may not be able to get accurate size information without making
+ * individual requests for each file, which would be very slow.
+ */
+export async function getStorageStats(): Promise<{
+  totalSizeBytes: number;
+  totalSizeMB: number;
+  fileCount: number;
+  bucketName: string;
+}> {
+  try {
+    console.log(`📊 [Storage Stats] Counting files in bucket...`);
+    return await countFilesAndEstimateSize();
+  } catch (error) {
+    console.error('❌ [Storage Stats] Error getting storage stats:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get storage statistics per user
+ * @returns Map of userId to their storage stats
+ */
+export async function getStorageStatsByUser(): Promise<Map<string, {
+  fileCount: number;
+  estimatedSizeMB: number;
+}>> {
+  try {
+    console.log(`📊 [Storage Stats] Calculating storage per user...`);
+    const supabaseAdmin = getSupabaseAdminClient();
+
+    // Helper function to recursively list all files
+    async function listAllFiles(path: string = ''): Promise<any[]> {
+      const { data: items, error } = await supabaseAdmin.storage
+        .from(PROFILE_BUCKET)
+        .list(path, {
+          limit: 1000,
+          sortBy: { column: 'created_at', order: 'desc' }
+        });
+
+      if (error) {
+        console.error(`❌ [Storage Stats] Error listing files in path "${path}":`, error);
+        return [];
+      }
+
+      if (!items) return [];
+
+      let allFiles: any[] = [];
+
+      for (const item of items) {
+        const itemPath = path ? `${path}/${item.name}` : item.name;
+
+        // If it's a folder (id is null), recursively get its contents
+        if (item.id === null) {
+          const subFiles = await listAllFiles(itemPath);
+          allFiles = allFiles.concat(subFiles);
+        } else {
+          // It's a file
+          allFiles.push({ ...item, fullPath: itemPath });
+        }
+      }
+
+      return allFiles;
+    }
+
+    const allFiles = await listAllFiles();
+
+    // Group files by userId (extracted from path)
+    // Path format: userId/timestamp_id.ext
+    const userStats = new Map<string, { fileCount: number; estimatedSizeMB: number }>();
+    const AVERAGE_FILE_SIZE_MB = 0.5; // 500KB per file estimate
+
+    for (const file of allFiles) {
+      const pathParts = file.fullPath.split('/');
+      if (pathParts.length >= 2) {
+        const userId = pathParts[0];
+
+        if (!userStats.has(userId)) {
+          userStats.set(userId, { fileCount: 0, estimatedSizeMB: 0 });
+        }
+
+        const stats = userStats.get(userId)!;
+        stats.fileCount++;
+        stats.estimatedSizeMB += AVERAGE_FILE_SIZE_MB;
+      }
+    }
+
+    // Round the MB values
+    for (const [userId, stats] of userStats.entries()) {
+      stats.estimatedSizeMB = Math.round(stats.estimatedSizeMB * 100) / 100;
+    }
+
+    console.log(`✅ [Storage Stats] Calculated storage for ${userStats.size} users`);
+
+    return userStats;
+  } catch (error) {
+    console.error('❌ [Storage Stats] Error getting storage by user:', error);
+    return new Map();
+  }
+}
+
+/**
+ * Count files and estimate total size
+ */
+async function countFilesAndEstimateSize(): Promise<{
+  totalSizeBytes: number;
+  totalSizeMB: number;
+  fileCount: number;
+  bucketName: string;
+}> {
+  try {
+    const supabaseAdmin = getSupabaseAdminClient();
+
+    // Helper function to recursively list all files
+    async function listAllFiles(path: string = ''): Promise<any[]> {
+      const { data: items, error } = await supabaseAdmin.storage
+        .from(PROFILE_BUCKET)
+        .list(path, {
+          limit: 1000,
+          sortBy: { column: 'created_at', order: 'desc' }
+        });
+
+      if (error) {
+        console.error(`❌ [Storage Stats] Error listing files in path "${path}":`, error);
+        return [];
+      }
+
+      if (!items) return [];
+
+      let allFiles: any[] = [];
+
+      for (const item of items) {
+        const itemPath = path ? `${path}/${item.name}` : item.name;
+
+        // If it's a folder (id is null), recursively get its contents
+        if (item.id === null) {
+          console.log(`📁 [Storage Stats] Found folder: ${itemPath}`);
+          const subFiles = await listAllFiles(itemPath);
+          allFiles = allFiles.concat(subFiles);
+        } else {
+          // It's a file
+          console.log(`📄 [Storage Stats] Found file: ${item.name}`);
+          allFiles.push(item);
+        }
+      }
+
+      return allFiles;
+    }
+
+    const allFiles = await listAllFiles();
+    const fileCount = allFiles.length;
+
+    console.log(`✅ [Storage Stats] Total files found: ${fileCount}`);
+
+    // Try to estimate size by downloading metadata for a sample
+    // or use average file size estimation
+    const AVERAGE_FILE_SIZE_MB = 0.5; // Estimate 500KB per file (conservative)
+    const estimatedSizeMB = fileCount * AVERAGE_FILE_SIZE_MB;
+    const estimatedSizeBytes = estimatedSizeMB * 1024 * 1024;
+
+    return {
+      totalSizeBytes: estimatedSizeBytes,
+      totalSizeMB: Math.round(estimatedSizeMB * 100) / 100,
+      fileCount,
+      bucketName: PROFILE_BUCKET
+    };
+  } catch (error) {
+    console.error('❌ [Storage Stats] Count files failed:', error);
+    return {
+      totalSizeBytes: 0,
+      totalSizeMB: 0,
+      fileCount: 0,
+      bucketName: PROFILE_BUCKET
+    };
+  }
+}

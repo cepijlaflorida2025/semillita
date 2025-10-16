@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { Users, ArrowRight, LogOut, HelpCircle, Search, X, Settings, Trash2 } from "lucide-react";
+import { Users, ArrowRight, LogOut, HelpCircle, Search, X, Settings, Trash2, HardDrive, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -31,6 +31,10 @@ interface ChildData {
   journalEntriesCount: number;
   points: number;
   createdAt: string;
+  storageUsed?: {
+    fileCount: number;
+    estimatedSizeMB: number;
+  };
 }
 
 interface FacilitatorDashboardData {
@@ -84,6 +88,18 @@ export default function FacilitatorDashboard() {
   const { data: emotionsData } = useQuery<Array<{ id: string; name: string; emoji: string; color: string }>>({
     queryKey: ['/api/emotions'],
     enabled: !!currentUser?.id,
+  });
+
+  // Fetch storage statistics
+  const { data: storageStats, refetch: refetchStorageStats, isLoading: isLoadingStorage } = useQuery<{
+    totalSizeBytes: number;
+    totalSizeMB: number;
+    fileCount: number;
+    bucketName: string;
+  }>({
+    queryKey: ['/api/storage/stats'],
+    enabled: !!currentUser?.id && currentUser?.role === 'facilitator',
+    staleTime: 60000, // Consider data stale after 60 seconds
   });
 
   const handleLogoutClick = () => {
@@ -352,6 +368,75 @@ export default function FacilitatorDashboard() {
           </CardContent>
         </Card>
 
+        {/* Storage Stats Card */}
+        <Card>
+          <CardContent className="p-4">
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <HardDrive className="w-5 h-5 text-primary" />
+                  <h3 className="font-semibold text-foreground">Almacenamiento</h3>
+                </div>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => refetchStorageStats()}
+                  disabled={isLoadingStorage}
+                  className="h-8"
+                >
+                  <RefreshCw className={`w-4 h-4 ${isLoadingStorage ? 'animate-spin' : ''}`} />
+                </Button>
+              </div>
+
+              {isLoadingStorage ? (
+                <div className="flex items-center justify-center py-4">
+                  <div className="animate-spin">
+                    <RefreshCw className="w-6 h-6 text-primary" />
+                  </div>
+                </div>
+              ) : storageStats ? (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm text-muted-foreground">Espacio Utilizado</p>
+                      <p className="text-2xl font-bold text-primary">
+                        {storageStats.totalSizeMB > 0 ? `~${storageStats.totalSizeMB}` : '0'} MB
+                      </p>
+                      {storageStats.totalSizeMB > 0 && (
+                        <p className="text-xs text-muted-foreground mt-1">Estimado</p>
+                      )}
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm text-muted-foreground">Archivos</p>
+                      <p className="text-2xl font-bold text-accent-foreground">{storageStats.fileCount}</p>
+                    </div>
+                  </div>
+
+                  {/* Progress bar - assuming 100MB limit */}
+                  {storageStats.totalSizeMB > 0 && (
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between text-xs text-muted-foreground">
+                        <span>Bucket: {storageStats.bucketName}</span>
+                        <span>{Math.round((storageStats.totalSizeMB / 100) * 100)}% usado</span>
+                      </div>
+                      <div className="w-full bg-muted rounded-full h-2">
+                        <div
+                          className="bg-primary rounded-full h-2 transition-all"
+                          style={{ width: `${Math.min((storageStats.totalSizeMB / 100) * 100, 100)}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground text-center py-4">
+                  No se pudo cargar la información de almacenamiento
+                </p>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
         {/* Children List */}
         <div className="space-y-4">
           <h2 className="text-lg font-bold text-foreground">
@@ -398,13 +483,35 @@ export default function FacilitatorDashboard() {
                             </Badge>
                           )}
                         </div>
-                        <div className="flex items-center space-x-3 text-xs text-muted-foreground">
+                        <div className="flex items-center space-x-3 text-xs text-muted-foreground mb-2">
                           <span>{child.age} años</span>
                           <span>•</span>
                           <span>{child.journalEntriesCount} entradas</span>
                           <span>•</span>
                           <span>{child.points} pts</span>
                         </div>
+
+                        {/* Storage indicator */}
+                        {child.storageUsed && child.storageUsed.fileCount > 0 && (
+                          <div className="flex items-center space-x-2">
+                            <HardDrive className="w-3 h-3 text-muted-foreground" />
+                            <div className="flex-1">
+                              <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
+                                <span>~{child.storageUsed.estimatedSizeMB} MB</span>
+                                <span>{child.storageUsed.fileCount} archivos</span>
+                              </div>
+                              <div className="w-full bg-muted rounded-full h-1">
+                                <div
+                                  className="bg-primary rounded-full h-1 transition-all"
+                                  style={{
+                                    width: `${Math.min((child.storageUsed.estimatedSizeMB / 10) * 100, 100)}%`
+                                  }}
+                                  title={`${Math.round((child.storageUsed.estimatedSizeMB / 10) * 100)}% de 10MB`}
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        )}
                       </div>
 
                       {/* Arrow */}

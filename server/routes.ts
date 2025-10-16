@@ -7,7 +7,7 @@ import { eq } from "drizzle-orm";
 import multer from "multer";
 import { z } from "zod";
 import { randomBytes } from "crypto";
-import { uploadToSupabase, saveProfileHistory, getProfileHistory } from "./supabase.js";
+import { uploadToSupabase, saveProfileHistory, getProfileHistory, getStorageStats, getStorageStatsByUser } from "./supabase.js";
 
 // Configure multer for file uploads
 const upload = multer({
@@ -892,19 +892,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const queryDuration = Date.now() - requestStart;
       console.log(`✅ [DASHBOARD] Fetched ${children.length} children in ${queryDuration}ms`);
 
+      // Get storage stats per user
+      console.log(`🔍 [DASHBOARD] Fetching storage stats per user...`);
+      const storageStatsStart = Date.now();
+      const storageStatsByUser = await getStorageStatsByUser();
+      const storageStatsDuration = Date.now() - storageStatsStart;
+      console.log(`✅ [DASHBOARD] Fetched storage stats in ${storageStatsDuration}ms`);
+
       // Transform data to match expected format
-      const childrenWithEmotions = children.map(child => ({
-        id: child.id,
-        alias: child.alias,
-        age: child.age,
-        latestEmotion: child.latestEmotionEmoji ? {
-          emoji: child.latestEmotionEmoji,
-          name: child.latestEmotionName || 'Desconocido',
-        } : null,
-        journalEntriesCount: child.journalEntriesCount,
-        points: child.points || 0,
-        createdAt: child.createdAt,
-      }));
+      const childrenWithEmotions = children.map(child => {
+        const userStorageStats = storageStatsByUser.get(child.id);
+
+        return {
+          id: child.id,
+          alias: child.alias,
+          age: child.age,
+          latestEmotion: child.latestEmotionEmoji ? {
+            emoji: child.latestEmotionEmoji,
+            name: child.latestEmotionName || 'Desconocido',
+          } : null,
+          journalEntriesCount: child.journalEntriesCount,
+          points: child.points || 0,
+          createdAt: child.createdAt,
+          storageUsed: userStorageStats ? {
+            fileCount: userStorageStats.fileCount,
+            estimatedSizeMB: userStorageStats.estimatedSizeMB,
+          } : {
+            fileCount: 0,
+            estimatedSizeMB: 0,
+          },
+        };
+      });
 
       const totalDuration = Date.now() - requestStart;
       console.log(`✅ [DASHBOARD] Request completed in ${totalDuration}ms total`);
@@ -962,6 +980,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Error fetching child profile:', error);
       res.status(500).json({ message: 'Error fetching child profile' });
+    }
+  });
+
+  // Storage statistics endpoint (for facilitators)
+  app.get('/api/storage/stats', async (req, res) => {
+    try {
+      console.log('📊 [GET /api/storage/stats] Fetching storage statistics...');
+
+      const stats = await getStorageStats();
+
+      console.log('✅ [GET /api/storage/stats] Storage stats:', stats);
+      res.json(stats);
+    } catch (error) {
+      console.error('❌ [GET /api/storage/stats] Error fetching storage stats:', error);
+      res.status(500).json({
+        message: 'Error fetching storage statistics',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
     }
   });
 
