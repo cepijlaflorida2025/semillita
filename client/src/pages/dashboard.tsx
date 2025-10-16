@@ -1,11 +1,21 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { Sprout, Star, HelpCircle, Camera, Plus, BookOpen, Leaf, LogOut, Calendar, Trophy, Award } from "lucide-react";
+import { Sprout, Star, HelpCircle, Camera, Plus, BookOpen, Leaf, LogOut, Calendar, Trophy, Award, Settings, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import BottomNavigation from "@/components/bottom-navigation";
 import NotificationToast from "@/components/notification-toast";
 import PhotoSelector from "@/components/photo-selector";
@@ -47,7 +57,13 @@ export default function Dashboard() {
   const [toastMessage, setToastMessage] = useState("");
   const [showPhotoSelector, setShowPhotoSelector] = useState(false);
   const [selectedDashboardPhoto, setSelectedDashboardPhoto] = useState<string | null>(null);
+  const [showLogoutDialog, setShowLogoutDialog] = useState(false);
+  const [showDeleteUserDialog, setShowDeleteUserDialog] = useState(false);
+  const [showSettingsDialog, setShowSettingsDialog] = useState(false);
   const { toast } = useToast();
+
+  // Accessibility settings
+  const [fontSize, setFontSize] = useState<'small' | 'medium' | 'large'>('medium');
 
   // Redirect facilitators to their own dashboard
   useEffect(() => {
@@ -61,6 +77,16 @@ export default function Dashboard() {
     enabled: !!currentUser?.id,
   });
 
+  // Load accessibility settings from user data
+  useEffect(() => {
+    if (dashboardData?.user?.accessibilitySettings) {
+      const settings = dashboardData.user.accessibilitySettings as { fontSize?: 'small' | 'medium' | 'large' };
+      if (settings.fontSize) {
+        setFontSize(settings.fontSize);
+      }
+    }
+  }, [dashboardData?.user?.accessibilitySettings]);
+
   // Fetch journal entries for photo selector
   const { data: journalEntries = [] } = useQuery({
     queryKey: ['/api/users', currentUser?.id, 'journal-entries'],
@@ -72,7 +98,11 @@ export default function Dashboard() {
     setShowToast(true);
   };
 
-  const handleLogout = () => {
+  const handleLogoutClick = () => {
+    setShowLogoutDialog(true);
+  };
+
+  const confirmLogout = () => {
     // Show success notification using global toast
     toast({
       title: "¡Hasta pronto!",
@@ -97,6 +127,78 @@ export default function Dashboard() {
       title: "¡Foto actualizada!",
       description: "La foto del dashboard se ha actualizado correctamente.",
     });
+  };
+
+  // Delete user mutation
+  const deleteUserMutation = useMutation({
+    mutationFn: async () => {
+      const response = await fetch(`/api/users/${currentUser?.id}?requestingUserId=${currentUser?.id}`, {
+        method: 'DELETE',
+      });
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || 'Error al eliminar usuario');
+      }
+      return response.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "Usuario eliminado",
+        description: "Tu usuario ha sido eliminado exitosamente.",
+      });
+      clearStorage();
+      queryClient.clear();
+      setTimeout(() => {
+        setLocation('/welcome');
+      }, 500);
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message || "No se pudo eliminar el usuario.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Update accessibility settings mutation
+  const updateAccessibilityMutation = useMutation({
+    mutationFn: async (settings: { fontSize: 'small' | 'medium' | 'large' }) => {
+      const response = await fetch(`/api/users/${currentUser?.id}/accessibility-settings`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accessibilitySettings: settings }),
+      });
+      if (!response.ok) {
+        throw new Error('Error al guardar ajustes');
+      }
+      return response.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "Ajustes guardados",
+        description: "Tus ajustes de accesibilidad se han guardado correctamente.",
+      });
+      queryClient.invalidateQueries({ queryKey: [`/api/dashboard/${currentUser?.id}`] });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message || "No se pudieron guardar los ajustes.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleFontSizeChange = (newSize: 'small' | 'medium' | 'large') => {
+    setFontSize(newSize);
+    updateAccessibilityMutation.mutate({ fontSize: newSize });
+  };
+
+  // handleDeleteUser is not needed anymore - button calls setShowDeleteUserDialog directly
+
+  const confirmDeleteUser = () => {
+    deleteUserMutation.mutate();
   };
 
   if (!currentUser) {
@@ -272,8 +374,20 @@ export default function Dashboard() {
   const userAvatar = user?.avatar ? AVATAR_OPTIONS.find(a => a.id === user.avatar) || AVATAR_OPTIONS[0] : AVATAR_OPTIONS[0];
   const userColorTheme = user?.colorTheme ? COLOR_THEMES.find(c => c.id === user.colorTheme) || COLOR_THEMES[0] : COLOR_THEMES[0];
 
+  // Get font size class
+  const getFontSizeClass = () => {
+    switch (fontSize) {
+      case 'small':
+        return 'text-sm';
+      case 'large':
+        return 'text-lg';
+      default:
+        return 'text-base';
+    }
+  };
+
   return (
-    <div className="h-screen bg-background overflow-y-auto">
+    <div className={`h-screen bg-background overflow-y-auto ${getFontSizeClass()}`}>
       {/* Main Content */}
       <main className="p-4 pb-20 space-y-6 fade-in relative">
         {/* Background Decoration */}
@@ -312,10 +426,11 @@ export default function Dashboard() {
                   size="icon"
                   variant="ghost"
                   className="w-8 h-8 bg-white bg-opacity-20 hover:bg-white hover:bg-opacity-30"
-                  data-testid="button-logout"
-                  onClick={handleLogout}
+                  data-testid="button-settings"
+                  onClick={() => setShowSettingsDialog(true)}
+                  title="Ajustes"
                 >
-                  <LogOut className="w-4 h-4 text-white" />
+                  <Settings className="w-4 h-4 text-white" />
                 </Button>
               </div>
             </div>
@@ -536,6 +651,31 @@ export default function Dashboard() {
             </div>
           </CardContent>
         </Card>
+
+        {/* Account Section at Bottom */}
+        <Card>
+          <CardContent className="p-6">
+            <h3 className="font-semibold text-foreground mb-4">Cuenta</h3>
+            <div className="space-y-3">
+              <Button
+                variant="outline"
+                className="w-full justify-start"
+                onClick={handleLogoutClick}
+              >
+                <LogOut className="w-4 h-4 mr-2" />
+                Cerrar sesión
+              </Button>
+              <Button
+                variant="destructive"
+                className="w-full justify-start"
+                onClick={() => setShowDeleteUserDialog(true)}
+              >
+                <Trash2 className="w-4 h-4 mr-2" />
+                Eliminar mi cuenta
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       </main>
 
       {/* Bottom Navigation */}
@@ -557,6 +697,92 @@ export default function Dashboard() {
           currentPhotoUrl={selectedDashboardPhoto || latestEntry?.photoUrl || plant?.latestPhotoUrl}
         />
       )}
+
+      {/* Settings Dialog */}
+      <AlertDialog open={showSettingsDialog} onOpenChange={setShowSettingsDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Ajustes de Accesibilidad</AlertDialogTitle>
+            <AlertDialogDescription>
+              Personaliza la apariencia de la aplicación para mejorar tu experiencia.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-4 py-4">
+            {/* Font Size */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Tamaño de fuente</label>
+              <div className="flex gap-2">
+                <Button
+                  variant={fontSize === 'small' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => handleFontSizeChange('small')}
+                  className="flex-1"
+                >
+                  Pequeño
+                </Button>
+                <Button
+                  variant={fontSize === 'medium' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => handleFontSizeChange('medium')}
+                  className="flex-1"
+                >
+                  Mediano
+                </Button>
+                <Button
+                  variant={fontSize === 'large' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => handleFontSizeChange('large')}
+                  className="flex-1"
+                >
+                  Grande
+                </Button>
+              </div>
+            </div>
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cerrar</AlertDialogCancel>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Logout Confirmation Dialog */}
+      <AlertDialog open={showLogoutDialog} onOpenChange={setShowLogoutDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Cerrar sesión?</AlertDialogTitle>
+            <AlertDialogDescription>
+              ¿Estás seguro de que deseas cerrar sesión? Tendrás que ingresar tu contraseña nuevamente para acceder.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmLogout}>
+              Cerrar sesión
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Delete User Confirmation Dialog */}
+      <AlertDialog open={showDeleteUserDialog} onOpenChange={setShowDeleteUserDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Eliminar tu usuario?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Esta acción eliminará permanentemente tu usuario <strong>{currentUser?.alias}</strong> y todos tus datos asociados (planta, entradas, logros, etc.). Esta acción no se puede deshacer.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmDeleteUser}
+              className="bg-red-500 hover:bg-red-600"
+            >
+              Eliminar mi usuario
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

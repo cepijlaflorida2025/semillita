@@ -21,8 +21,8 @@ import opcionIsollogo from "@assets/isologo_opcion_1758035535543.png";
 
 // UI-only fields for form management
 const uiOnlyFields = z.object({
-  password: z.string().min(4, "La contraseña debe tener al menos 4 caracteres"),
-  confirmPassword: z.string().min(4, "Confirma tu contraseña"),
+  password: z.string().min(6, "La contraseña debe tener al menos 6 caracteres"),
+  confirmPassword: z.string().min(6, "Confirma tu contraseña"),
 });
 
 type UIRegisterForm = InsertUser & z.infer<typeof uiOnlyFields>;
@@ -58,8 +58,8 @@ export default function Register() {
       colorTheme: z.string().default("green"),
       age: z.number().min(6, "Debes tener al menos 6 años"),
       role: z.literal("child"),
-      password: z.string().min(4, "La contraseña debe tener al menos 4 caracteres"),
-      confirmPassword: z.string().min(4, "Confirma tu contraseña"),
+      password: z.string().min(6, "La contraseña debe tener al menos 6 caracteres"),
+      confirmPassword: z.string().min(6, "Confirma tu contraseña"),
       // Simplified fields
       parentEmail: z.string().optional(),
       parentalConsent: z.boolean().optional(),

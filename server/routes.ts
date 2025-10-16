@@ -364,6 +364,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Update user accessibility settings
+  app.patch('/api/users/:id/accessibility-settings', async (req, res) => {
+    try {
+      const userId = req.params.id;
+      const { accessibilitySettings } = req.body;
+
+      if (!accessibilitySettings) {
+        return res.status(400).json({ message: 'Accessibility settings are required' });
+      }
+
+      const updatedUser = await storage.updateUserAccessibilitySettings(userId, accessibilitySettings);
+      res.json(updatedUser);
+    } catch (error) {
+      console.error('Error updating accessibility settings:', error);
+      res.status(500).json({ message: 'Server error' });
+    }
+  });
+
   // Dashboard endpoint - aggregates all user data
   app.get('/api/dashboard/:userId', async (req, res) => {
     try {
@@ -859,59 +877,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Facilitator dashboard endpoint
+  // Facilitator dashboard endpoint - OPTIMIZED for local development
   app.get('/api/facilitator/dashboard', async (req, res) => {
     try {
+      const requestStart = Date.now();
       console.log(`📥 [GET /api/facilitator/dashboard] Request started at ${new Date().toISOString()}`);
+
       // Run default data initialization in background, don't wait
       ensureDefaultData();
 
-      // Get all children users with their latest emotion
-      const children = await storage.getAllChildren();
+      // OPTIMIZED: Single query with all stats included (avoids N+1 query problem)
+      console.log(`🔍 [DASHBOARD] Fetching children with stats (optimized single query)...`);
+      const children = await storage.getAllChildrenWithStats();
+      const queryDuration = Date.now() - requestStart;
+      console.log(`✅ [DASHBOARD] Fetched ${children.length} children in ${queryDuration}ms`);
 
-      // Batch all queries for better performance but tolerate slow/failing child queries
-      console.log(`🔍 [DASHBOARD] Fetching data for ${children.length} children`);
-      const childrenPromises = children.map(async (child) => {
-        const childStart = Date.now();
-        try {
-          const [latestEntry, journalEntriesCount] = await Promise.all([
-            storage.getLatestJournalEntry(child.id),
-            storage.getJournalEntriesCount(child.id),
-          ]);
+      // Transform data to match expected format
+      const childrenWithEmotions = children.map(child => ({
+        id: child.id,
+        alias: child.alias,
+        age: child.age,
+        latestEmotion: child.latestEmotionEmoji ? {
+          emoji: child.latestEmotionEmoji,
+          name: child.latestEmotionName || 'Desconocido',
+        } : null,
+        journalEntriesCount: child.journalEntriesCount,
+        points: child.points || 0,
+        createdAt: child.createdAt,
+      }));
 
-          const result = {
-            id: child.id,
-            alias: child.alias,
-            age: child.age,
-            latestEmotion: latestEntry?.emotion ? {
-              emoji: latestEntry.emotion.emoji,
-              name: latestEntry.emotion.name,
-            } : null,
-            journalEntriesCount,
-            points: child.points || 0,
-            createdAt: child.createdAt,
-          };
-
-          const dur = Date.now() - childStart;
-          if (dur > 1000) console.warn(`⚠️ [DASHBOARD] Slow child data fetch for ${child.id}: ${dur}ms`);
-          return { status: 'fulfilled', value: result } as const;
-        } catch (err) {
-          const dur = Date.now() - childStart;
-          console.error(`❌ [DASHBOARD] Error fetching data for child ${child.id} after ${dur}ms:`, err);
-          return { status: 'rejected', reason: err } as const;
-        }
-      });
-
-      const settled = await Promise.all(childrenPromises);
-      const childrenWithEmotions = settled
-        .filter((r): r is { status: 'fulfilled'; value: any } => r.status === 'fulfilled')
-        .map(r => r.value);
+      const totalDuration = Date.now() - requestStart;
+      console.log(`✅ [DASHBOARD] Request completed in ${totalDuration}ms total`);
 
       res.json({
         children: childrenWithEmotions,
       });
     } catch (error) {
-      console.error('Error fetching facilitator dashboard:', error);
+      console.error('❌ [DASHBOARD] Error fetching facilitator dashboard:', error);
       res.status(500).json({ message: 'Error fetching dashboard data' });
     }
   });

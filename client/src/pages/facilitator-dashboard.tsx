@@ -1,11 +1,21 @@
-import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useState, useEffect } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { Users, ArrowRight, LogOut, HelpCircle, Search, Calendar, X } from "lucide-react";
+import { Users, ArrowRight, LogOut, HelpCircle, Search, X, Settings, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useStorage } from "@/hooks/use-storage";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
@@ -37,13 +47,31 @@ export default function FacilitatorDashboard() {
   const [searchTerm, setSearchTerm] = useState("");
   const [emotionFilter, setEmotionFilter] = useState("");
 
+  // Dialog states
+  const [showLogoutDialog, setShowLogoutDialog] = useState(false);
+  const [showSettingsDialog, setShowSettingsDialog] = useState(false);
+  const [showDeleteUserDialog, setShowDeleteUserDialog] = useState(false);
+
+  // Accessibility settings
+  const [fontSize, setFontSize] = useState<'small' | 'medium' | 'large'>('medium');
+
+  // Load accessibility settings from user data
+  useEffect(() => {
+    if (currentUser?.accessibilitySettings) {
+      const settings = currentUser.accessibilitySettings as { fontSize?: 'small' | 'medium' | 'large' };
+      if (settings.fontSize) {
+        setFontSize(settings.fontSize);
+      }
+    }
+  }, [currentUser?.accessibilitySettings]);
+
   const { data: dashboardData, isLoading, error } = useQuery<FacilitatorDashboardData>({
     queryKey: [`/api/facilitator/dashboard`],
     enabled: !!currentUser?.id && currentUser?.role === 'facilitator',
-    refetchInterval: 30000, // Refetch every 30 seconds (reduced from 10s to avoid timeouts)
-    staleTime: 20000, // Consider data stale after 20 seconds
-    retry: 1, // Retry failed requests once
-    retryDelay: 1000, // Wait 1 second between retries
+    refetchInterval: false, // Disable auto-refetch in development to reduce server load
+    staleTime: 60000, // Consider data stale after 60 seconds
+    retry: 3, // Retry failed requests 3 times (more resilient for local dev)
+    retryDelay: 2000, // Wait 2 seconds between retries (more time for slow connections)
   });
 
   // Debugging: log currentUser and dashboard fetch trigger
@@ -58,7 +86,11 @@ export default function FacilitatorDashboard() {
     enabled: !!currentUser?.id,
   });
 
-  const handleLogout = () => {
+  const handleLogoutClick = () => {
+    setShowLogoutDialog(true);
+  };
+
+  const confirmLogout = () => {
     toast({
       title: "¡Hasta pronto!",
       description: "Has cerrado sesión correctamente.",
@@ -70,6 +102,53 @@ export default function FacilitatorDashboard() {
     setTimeout(() => {
       setLocation('/welcome');
     }, 100);
+  };
+
+  const handleDeleteUser = () => {
+    setShowDeleteUserDialog(true);
+  };
+
+  const confirmDeleteUser = () => {
+    // For facilitator, just logout (facilitators shouldn't delete themselves from dashboard)
+    toast({
+      title: "Acción no disponible",
+      description: "Los facilitadores no pueden eliminar su propia cuenta desde aquí.",
+      variant: "destructive",
+    });
+    setShowDeleteUserDialog(false);
+  };
+
+  // Update accessibility settings mutation
+  const updateAccessibilityMutation = useMutation({
+    mutationFn: async (settings: { fontSize: 'small' | 'medium' | 'large' }) => {
+      const response = await fetch(`/api/users/${currentUser?.id}/accessibility-settings`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accessibilitySettings: settings }),
+      });
+      if (!response.ok) {
+        throw new Error('Error al guardar ajustes');
+      }
+      return response.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "Ajustes guardados",
+        description: "Tus ajustes de accesibilidad se han guardado correctamente.",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message || "No se pudieron guardar los ajustes.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleFontSizeChange = (newSize: 'small' | 'medium' | 'large') => {
+    setFontSize(newSize);
+    updateAccessibilityMutation.mutate({ fontSize: newSize });
   };
 
   const handleViewChild = (childId: string) => {
@@ -104,6 +183,18 @@ export default function FacilitatorDashboard() {
 
   const hasActiveFilters = searchTerm || emotionFilter;
 
+  // Get font size class
+  const getFontSizeClass = () => {
+    switch (fontSize) {
+      case 'small':
+        return 'text-sm';
+      case 'large':
+        return 'text-lg';
+      default:
+        return 'text-base';
+    }
+  };
+
   // Early returns AFTER all hooks
   if (!currentUser || currentUser.role !== 'facilitator') {
     setLocation('/welcome');
@@ -112,9 +203,15 @@ export default function FacilitatorDashboard() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
+      <div className="flex flex-col items-center justify-center min-h-screen gap-4">
         <div className="animate-spin">
           <Users className="w-8 h-8 text-primary" />
+        </div>
+        <div className="text-center">
+          <p className="text-sm font-medium text-foreground">Cargando dashboard...</p>
+          <p className="text-xs text-muted-foreground mt-1">
+            Obteniendo información de los niños
+          </p>
         </div>
       </div>
     );
@@ -137,7 +234,7 @@ export default function FacilitatorDashboard() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className={`min-h-screen bg-background ${getFontSizeClass()}`}>
       <div className="p-4 space-y-6">
         {/* Header Card */}
         <Card className="bg-gradient-to-r from-primary to-accent text-white border-0 shadow-lg">
@@ -165,9 +262,10 @@ export default function FacilitatorDashboard() {
                   size="icon"
                   variant="ghost"
                   className="w-8 h-8 bg-white bg-opacity-20 hover:bg-white hover:bg-opacity-30"
-                  onClick={handleLogout}
+                  onClick={() => setShowSettingsDialog(true)}
+                  title="Ajustes"
                 >
-                  <LogOut className="w-4 h-4 text-white" />
+                  <Settings className="w-4 h-4 text-white" />
                 </Button>
               </div>
             </div>
@@ -318,7 +416,113 @@ export default function FacilitatorDashboard() {
             ))
           )}
         </div>
+
+        {/* Account Section at Bottom */}
+        <Card>
+          <CardContent className="p-4">
+            <h3 className="font-semibold text-foreground mb-4">Cuenta</h3>
+            <div className="space-y-3">
+              <Button
+                variant="outline"
+                className="w-full justify-start"
+                onClick={handleLogoutClick}
+              >
+                <LogOut className="w-4 h-4 mr-2" />
+                Cerrar sesión
+              </Button>
+              <Button
+                variant="destructive"
+                className="w-full justify-start"
+                onClick={handleDeleteUser}
+              >
+                <Trash2 className="w-4 h-4 mr-2" />
+                Eliminar mi cuenta
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       </div>
+
+      {/* Settings Dialog */}
+      <AlertDialog open={showSettingsDialog} onOpenChange={setShowSettingsDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Ajustes de Accesibilidad</AlertDialogTitle>
+            <AlertDialogDescription>
+              Personaliza la apariencia de la aplicación para mejorar tu experiencia.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-4 py-4">
+            {/* Font Size */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Tamaño de fuente</label>
+              <div className="flex gap-2">
+                <Button
+                  variant={fontSize === 'small' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => handleFontSizeChange('small')}
+                  className="flex-1"
+                >
+                  Pequeño
+                </Button>
+                <Button
+                  variant={fontSize === 'medium' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => handleFontSizeChange('medium')}
+                  className="flex-1"
+                >
+                  Mediano
+                </Button>
+                <Button
+                  variant={fontSize === 'large' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => handleFontSizeChange('large')}
+                  className="flex-1"
+                >
+                  Grande
+                </Button>
+              </div>
+            </div>
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cerrar</AlertDialogCancel>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Logout Confirmation Dialog */}
+      <AlertDialog open={showLogoutDialog} onOpenChange={setShowLogoutDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Cerrar sesión?</AlertDialogTitle>
+            <AlertDialogDescription>
+              ¿Estás seguro de que deseas cerrar sesión? Tendrás que ingresar tus credenciales nuevamente para acceder.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmLogout}>
+              Cerrar sesión
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Delete User Confirmation Dialog */}
+      <AlertDialog open={showDeleteUserDialog} onOpenChange={setShowDeleteUserDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Eliminar cuenta?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Los facilitadores no pueden eliminar su propia cuenta desde el dashboard.
+              Por favor contacta al administrador del sistema si necesitas eliminar tu cuenta.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Entendido</AlertDialogCancel>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

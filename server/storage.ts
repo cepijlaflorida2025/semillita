@@ -42,6 +42,7 @@ export interface IStorage {
   createUser(user: InsertUser): Promise<User>;
   updateUserPoints(id: string, pointsToAdd: number): Promise<User>;
   updateUserConsent(id: string, consentVerified: boolean): Promise<User>;
+  updateUserAccessibilitySettings(id: string, settings: any): Promise<User>;
   deleteUser(id: string): Promise<void>;
   // Return a minimal child summary for facilitator dashboard
   getAllChildren(): Promise<{
@@ -50,6 +51,17 @@ export interface IStorage {
     age: number;
     points: number | null;
     createdAt: Date | null;
+  }[]>;
+  // Optimized version with stats included (single query)
+  getAllChildrenWithStats(): Promise<{
+    id: string;
+    alias: string;
+    age: number;
+    points: number | null;
+    createdAt: Date | null;
+    journalEntriesCount: number;
+    latestEmotionEmoji: string | null;
+    latestEmotionName: string | null;
   }[]>;
   getJournalEntriesCount(userId: string): Promise<number>;
   getUserPlant(userId: string): Promise<Plant | undefined>;
@@ -169,6 +181,18 @@ export class DatabaseStorage implements IStorage {
       .set({
         consentVerified,
         parentalConsentDate: consentVerified ? new Date() : null,
+        updatedAt: new Date()
+      })
+      .where(eq(users.id, id))
+      .returning();
+    return user;
+  }
+
+  async updateUserAccessibilitySettings(id: string, settings: any): Promise<User> {
+    const [user] = await db
+      .update(users)
+      .set({
+        accessibilitySettings: settings,
         updatedAt: new Date()
       })
       .where(eq(users.id, id))
@@ -604,6 +628,54 @@ export class DatabaseStorage implements IStorage {
       .where(eq(users.role, 'child'))
       .orderBy(desc(users.createdAt))
       .limit(100);
+  }
+
+  async getAllChildrenWithStats(): Promise<{
+    id: string;
+    alias: string;
+    age: number;
+    points: number | null;
+    createdAt: Date | null;
+    journalEntriesCount: number;
+    latestEmotionEmoji: string | null;
+    latestEmotionName: string | null;
+  }[]> {
+    // Optimized single query with subqueries for stats - avoids N+1 query problem
+    const result = await db
+      .select({
+        id: users.id,
+        alias: users.alias,
+        age: users.age,
+        points: users.points,
+        createdAt: users.createdAt,
+        journalEntriesCount: sql<number>`(
+          SELECT COALESCE(COUNT(*)::int, 0)
+          FROM journal_entries
+          WHERE journal_entries.user_id = users.id
+        )`,
+        latestEmotionEmoji: sql<string | null>`(
+          SELECT emotions.emoji
+          FROM journal_entries je
+          LEFT JOIN emotions ON je.emotion_id = emotions.id
+          WHERE je.user_id = users.id
+          ORDER BY je.created_at DESC
+          LIMIT 1
+        )`,
+        latestEmotionName: sql<string | null>`(
+          SELECT emotions.name
+          FROM journal_entries je
+          LEFT JOIN emotions ON je.emotion_id = emotions.id
+          WHERE je.user_id = users.id
+          ORDER BY je.created_at DESC
+          LIMIT 1
+        )`
+      })
+      .from(users)
+      .where(eq(users.role, 'child'))
+      .orderBy(desc(users.createdAt))
+      .limit(100);
+
+    return result;
   }
 
   async getJournalEntriesCount(userId: string): Promise<number> {

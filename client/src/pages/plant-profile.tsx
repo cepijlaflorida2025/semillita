@@ -205,16 +205,6 @@ export default function PlantProfile() {
                 >
                   <Plus className="w-5 h-5 text-white" />
                 </Button>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  onClick={() => setShowDeleteUserDialog(true)}
-                  className="w-10 h-10 bg-red-500 bg-opacity-80 hover:bg-red-600 hover:bg-opacity-90"
-                  title="Eliminar mi usuario"
-                  data-testid="button-delete-user"
-                >
-                  <UserX className="w-5 h-5 text-white" />
-                </Button>
               </div>
             </div>
           </CardContent>
